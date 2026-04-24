@@ -34,9 +34,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.controllers.clientes_controller import ClienteRow, ClientesController
+from src.gui.controllers.diagnostico_controller import DiagnosticoController
 from src.gui.controllers.importacao_controller import ImportacaoController
 from src.gui.views.t1_clientes import T1Clientes
 from src.gui.views.t2_importacao import T2Importacao
+from src.gui.views.t3_diagnostico import T3Diagnostico
 from src.gui.widgets import SideRailItem, Toast
 
 
@@ -142,6 +144,9 @@ class MainWindow(QMainWindow):
                 item.set_active(True)
             elif tela_id == "T2":
                 pass  # ativo nesta iteração
+            elif tela_id == "T3":
+                item.setEnabled(False)  # habilitado quando há cliente aberto
+                item.setToolTip(f"{label} — selecione um cliente em T1 primeiro")
             else:
                 item.setEnabled(False)
                 item.setToolTip(f"{label} — disponível em iteração futura")
@@ -175,6 +180,11 @@ class MainWindow(QMainWindow):
         self._t2.importacao_concluida.connect(self._on_importacao_concluida)
         self._central_stack.addWidget(self._t2)
 
+        # T3 — Diagnóstico (controller persistente)
+        self._diag_controller = DiagnosticoController(parent=self)
+        self._t3 = T3Diagnostico(controller=self._diag_controller)
+        self._central_stack.addWidget(self._t3)
+
         h.addWidget(self._central_stack, 1)
         self.setCentralWidget(central)
 
@@ -185,6 +195,7 @@ class MainWindow(QMainWindow):
         self._tela_widgets: dict[str, QWidget] = {
             "T1": self._t1,
             "T2": self._t2,
+            "T3": self._t3,
         }
 
     # ------------------------------------------------------------
@@ -209,16 +220,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------
 
     def _on_cliente_aberto(self, cliente: ClienteRow) -> None:
-        """Por enquanto, T3+ ainda não existem — só atualizamos o status."""
+        """Carrega o cliente em T3 e navega para a tela."""
         self._sb_cliente.setText(
             f"Cliente: {cliente.razao_social}  ·  AC {cliente.ano_calendario}  "
             f"·  CNPJ {cliente.cnpj_formatado()}"
         )
-        Toast.show_info(
-            self,
-            f"{cliente.razao_social} (AC {cliente.ano_calendario}) — "
-            "T3 (Diagnóstico) chegará na próxima iteração",
-        )
+        self._side_items["T3"].setEnabled(True)
+        self._side_items["T3"].setToolTip("Diagnóstico · Ctrl+3")
+        self._t3.carregar_cliente(cliente)
+        self._navegar_para("T3")
 
     def _on_importar_solicitado(self) -> None:
         self._navegar_para("T2")
@@ -240,9 +250,13 @@ class MainWindow(QMainWindow):
             item.set_active(tid == tela_id)
 
     def closeEvent(self, ev) -> None:  # noqa: N802 (Qt API)
-        # Encerra o worker thread de importação limpamente
+        # Encerra worker threads (importação e diagnóstico) limpamente
         try:
             self._t2.shutdown()
+        except Exception:
+            pass
+        try:
+            self._t3.shutdown()
         except Exception:
             pass
         self._settings.setValue("MainWindow/geometry", self.saveGeometry())
