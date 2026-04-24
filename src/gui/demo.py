@@ -31,10 +31,16 @@ from src.gui.widgets import (
     CodigoLinkButton,
     ColumnSpec,
     DataTable,
+    EmptyState,
+    FilterChip,
+    InlineMessage,
+    MessageLevel,
     SearchField,
     SpedType,
     StatCard,
     StatusBadge,
+    Toast,
+    ToastAction,
     TraceabilityBreadcrumb,
     VersionLabel,
 )
@@ -104,6 +110,14 @@ class DemoWindow(QMainWindow):
         self._montar_stat_cards(vbox)
         vbox.addWidget(_divider())
         self._montar_data_table(vbox)
+        vbox.addWidget(_divider())
+        self._montar_filter_chip(vbox)
+        vbox.addWidget(_divider())
+        self._montar_inline_message(vbox)
+        vbox.addWidget(_divider())
+        self._montar_empty_state(vbox)
+        vbox.addWidget(_divider())
+        self._montar_toast(vbox)
 
         vbox.addStretch()
         scroll.setWidget(root)
@@ -401,6 +415,176 @@ class DemoWindow(QMainWindow):
 
         parent.addWidget(dt)
         parent.addWidget(self._dt_status)
+
+    # ------------------------------------------------------------
+    # FilterChip + InlineMessage + EmptyState + Toast
+    # ------------------------------------------------------------
+
+    def _montar_filter_chip(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title(
+            "FilterChip — chips toggleáveis (uso típico em T3)"
+        ))
+
+        # Cria o status label PRIMEIRO porque pré-marcações disparam
+        # toggled_with_id antes do label existir.
+        self._fc_status = QLabel("(Clique para alternar)")
+        self._fc_status.setStyleSheet(
+            "color: #008C95; font-family: 'JetBrains Mono', Consolas; font-size: 10pt;"
+            "padding: 6px; background: #E6F3F4; border-radius: 2px;"
+        )
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        chips = []
+        for label, chip_id, count in [
+            ("Alto", "alto", 34),
+            ("Médio", "medio", 12),
+            ("Baixo", "baixo", 5),
+            ("N/A", "na", None),
+        ]:
+            chip = FilterChip(label, chip_id)
+            chip.set_count(count)
+            row.addWidget(chip)
+            chips.append(chip)
+
+        # Pré-marca antes de conectar (não dispara handler indesejadamente)
+        chips[0].setChecked(True)
+        chips[1].setChecked(True)
+
+        # Conecta DEPOIS das pré-marcações
+        for chip in chips:
+            chip.toggled_with_id.connect(
+                lambda cid, ativo: self._fc_status.setText(
+                    f"toggled_with_id: chip_id={cid!r} ativo={ativo}"
+                )
+            )
+
+        row.addStretch()
+        wrap = QWidget()
+        wrap.setLayout(row)
+        parent.addWidget(wrap)
+        parent.addWidget(self._fc_status)
+
+    def _montar_inline_message(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title(
+            "InlineMessage — banner persistente dentro de tela"
+        ))
+
+        col = QVBoxLayout()
+        col.setSpacing(6)
+
+        col.addWidget(InlineMessage(
+            MessageLevel.SUCCESS,
+            "Diagnóstico concluído com 12 oportunidades identificadas.",
+        ))
+        col.addWidget(InlineMessage(
+            MessageLevel.INFO,
+            "Reconciliação de plano de contas: estado 'íntegra' (IND_MUDANC_PC=0).",
+            dismissible=True,
+        ))
+        col.addWidget(InlineMessage(
+            MessageLevel.WARNING,
+            "ECD com IND_MUDANC_PC=1 e Bloco C parcial — reconciliação 'suspeita'.",
+            action_label="Abrir T6",
+        ))
+        col.addWidget(InlineMessage(
+            MessageLevel.ERROR,
+            "Encoding suspeito em efd_contrib_202501.txt — confirmar antes de prosseguir.",
+            action_label="Confirmar encoding",
+        ))
+
+        wrap = QWidget()
+        wrap.setLayout(col)
+        parent.addWidget(wrap)
+
+    def _montar_empty_state(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title(
+            "EmptyState — placeholder de zero-data"
+        ))
+
+        es = EmptyState(
+            title="Nenhum cliente importado ainda",
+            description=(
+                "Arraste um arquivo SPED (EFD-Contribuições, EFD ICMS/IPI, "
+                "ECD ou ECF) para começar a análise. O tipo é detectado "
+                "automaticamente pelo registro 0000."
+            ),
+            primary_action_label="Importar agora",
+            secondary_action_label="Abrir documentação",
+        )
+        es.setMinimumHeight(280)
+        es.setStyleSheet(
+            "EmptyState { background: #FFFFFF; border: 1px solid #D1D3D6; border-radius: 4px; }"
+        )
+
+        es.primary_action.connect(
+            lambda: self._es_status.setText("primary_action emitido (Importar agora)")
+        )
+        es.secondary_action.connect(
+            lambda: self._es_status.setText("secondary_action emitido (Documentação)")
+        )
+
+        parent.addWidget(es)
+
+        self._es_status = QLabel("(Clique nos botões para testar)")
+        self._es_status.setStyleSheet(
+            "color: #008C95; font-family: 'JetBrains Mono', Consolas; font-size: 10pt;"
+            "padding: 6px; background: #E6F3F4; border-radius: 2px;"
+        )
+        parent.addWidget(self._es_status)
+
+    def _montar_toast(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title(
+            "Toast — notificação não-bloqueante (canto inferior direito)"
+        ))
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        for label, fn in [
+            ("Success", lambda: Toast.show_success(self, "Parecer gerado em data/output/")),
+            ("Info", lambda: Toast.show_info(self, "Importação iniciada — 12.3k linhas")),
+            ("Warning", lambda: Toast.show_warning(
+                self, "Encoding suspeito; confirme antes de prosseguir.")),
+            ("Error", lambda: Toast.show_error(
+                self, "Falha ao salvar diagnóstico — disco cheio.")),
+            ("Com ação", lambda: Toast.show_success(
+                self, "Documento gerado",
+                action=ToastAction(
+                    label="Abrir",
+                    callback=lambda: self._toast_status.setText("Ação 'Abrir' chamada"),
+                ),
+            )),
+        ]:
+            btn = QPushButton(label) if False else None  # noqa: F841
+            from PySide6.QtWidgets import QPushButton as _QPB
+            b = _QPB(label)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                "QPushButton { background: #FFFFFF; border: 1px solid #D1D3D6; "
+                "border-radius: 2px; padding: 4px 12px; color: #53565A; } "
+                "QPushButton:hover { border-color: #008C95; color: #008C95; }"
+            )
+            b.clicked.connect(fn)
+            row.addWidget(b)
+
+        row.addStretch()
+        wrap = QWidget()
+        wrap.setLayout(row)
+        parent.addWidget(wrap)
+
+        self._toast_status = QLabel(
+            "Clique para disparar Toast no canto inferior direito da janela. "
+            "Pilha limita a 3 simultâneos; auto-dismiss em 8-12s; "
+            "hover pausa o timer."
+        )
+        self._toast_status.setStyleSheet(
+            "color: #787A80; font-size: 10pt; margin-top: 4px;"
+        )
+        self._toast_status.setWordWrap(True)
+        parent.addWidget(self._toast_status)
 
 
 def run() -> int:
