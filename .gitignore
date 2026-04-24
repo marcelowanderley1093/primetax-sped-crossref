@@ -1,0 +1,34 @@
+# Dados de clientes — nunca versionar (LGPD)
+data/input/
+data/output/
+data/db/
+data/logs/
+*.sped
+
+# Exceção: tabelas públicas da RFB (reprodutibilidade de diagnósticos)
+!data/tabelas-dinamicas-rfb/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

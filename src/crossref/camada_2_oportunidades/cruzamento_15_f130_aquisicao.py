@@ -1,0 +1,86 @@
+"""CR-15 — Crédito de PIS/COFINS sobre Valor de Aquisição do Imobilizado não aproveitado (F130).
+
+Base legal:
+  Art. 3º, VI da Lei 10.637/2002 (PIS) e Lei 10.833/2003 (COFINS): crédito sobre
+  valor de aquisição de bens do ativo imobilizado incorporados à produção de bens
+  ou prestação de serviços.
+  Lei 12.546/2011 (MP 540/2011): crédito integral (IND_NR_PARC=1) para máquinas e
+  equipamentos adquiridos a partir de 03/08/2011. Antes: 12, 24 ou 48 parcelas.
+  Lei 10.865/2004, art. 31: vedação para imobilizado adquirido antes de 01/05/2004.
+  Vigência: 01/2003 (PIS) e 02/2004 (COFINS).
+
+Lógica do cruzamento:
+  Para cada F130 com IND_UTIL_BEM_IMOB ∈ {1, 2, 3}:
+    Se VL_BC_PIS > 0 E VL_PIS = 0 → crédito sobre aquisição não aproveitado → Oportunidade.
+  Valor do impacto: VL_BC_PIS × ALIQ_PIS / 100.
+"""
+
+from decimal import Decimal
+
+
+def executar(repo, conn, cnpj: str, ano_mes: int, ano_calendario: int):
+    """Retorna (oportunidades, divergencias)."""
+    from src.models.registros import Oportunidade
+
+    registros = repo.consultar_f130_por_periodo(conn, cnpj, ano_mes)
+    if not registros:
+        return [], []
+
+    oportunidades = []
+    for r in registros:
+        ind_util = str(r["ind_util_bem_imob"] or "").strip()
+        if ind_util not in {"1", "2", "3"}:
+            continue
+
+        vl_bc_pis = Decimal(str(r["vl_bc_pis"] or 0))
+        vl_pis = Decimal(str(r["vl_pis"] or 0))
+        aliq_pis = Decimal(str(r["aliq_pis"] or 0))
+
+        if vl_bc_pis <= 0:
+            continue
+        if vl_pis > Decimal("0.01"):
+            continue
+
+        credito_esperado = (vl_bc_pis * aliq_pis / Decimal("100")).quantize(Decimal("0.01"))
+        if credito_esperado <= 0:
+            continue
+
+        vl_cofins = Decimal(str(r["vl_cofins"] or 0))
+        vl_bc_cofins = Decimal(str(r["vl_bc_cofins"] or 0))
+        aliq_cofins = Decimal(str(r["aliq_cofins"] or 0))
+        cofins_esperado = (vl_bc_cofins * aliq_cofins / Decimal("100")).quantize(Decimal("0.01"))
+        impacto_cofins = cofins_esperado if vl_cofins <= Decimal("0.01") else Decimal("0")
+
+        descricao = (
+            f"F130 — bem '{r.get('desc_bem_imob') or r.get('ident_bem_imob')}' (aquisição"
+            f" R$ {float(r['vl_oper_aquis'] or 0):.2f}, parc.={r.get('ind_nr_parc')}):"
+            f" crédito PIS de R$ {float(credito_esperado):.2f} não aproveitado (VL_PIS=0)."
+            f" IND_UTIL={ind_util}."
+        )
+        oportunidades.append(
+            Oportunidade(
+                codigo_regra="CR-15",
+                descricao=descricao,
+                severidade="medio",
+                valor_impacto_conservador=credito_esperado,
+                valor_impacto_maximo=credito_esperado + impacto_cofins,
+                evidencia=[{
+                    "registro": "F130",
+                    "arquivo": r["arquivo_origem"],
+                    "linha": r["linha_arquivo"],
+                    "campos_chave": {
+                        "desc_bem_imob": r.get("desc_bem_imob") or "",
+                        "ident_bem_imob": r.get("ident_bem_imob") or "",
+                        "ind_util_bem_imob": ind_util,
+                        "ind_nr_parc": r.get("ind_nr_parc") or "",
+                        "vl_oper_aquis": float(r["vl_oper_aquis"] or 0),
+                        "vl_bc_pis": float(vl_bc_pis),
+                        "aliq_pis": float(aliq_pis),
+                        "credito_pis_esperado": float(credito_esperado),
+                        "vl_pis_declarado": float(vl_pis),
+                    },
+                }],
+            )
+        )
+
+    return oportunidades, []
