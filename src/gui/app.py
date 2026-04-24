@@ -34,7 +34,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.controllers.clientes_controller import ClienteRow, ClientesController
+from src.gui.controllers.importacao_controller import ImportacaoController
 from src.gui.views.t1_clientes import T1Clientes
+from src.gui.views.t2_importacao import T2Importacao
 from src.gui.widgets import SideRailItem, Toast
 
 
@@ -74,10 +76,7 @@ class MainWindow(QMainWindow):
         if state:
             self.restoreState(state)
 
-    def closeEvent(self, ev) -> None:  # noqa: N802 (Qt API)
-        self._settings.setValue("MainWindow/geometry", self.saveGeometry())
-        self._settings.setValue("MainWindow/state", self.saveState())
-        super().closeEvent(ev)
+    # closeEvent unificado fica no fim do arquivo (gerencia worker + geometria).
 
     # ------------------------------------------------------------
     # Menubar
@@ -139,11 +138,14 @@ class MainWindow(QMainWindow):
             ("⊙", "T8", "Auditoria",      "Ctrl+H"),
         ]:
             item = SideRailItem(icon, tela_id, label, shortcut, parent=rail)
-            if tela_id != "T1":
-                item.setEnabled(False)  # demais virão em iterações seguintes
-                item.setToolTip(f"{label} — disponível em iteração futura")
-            else:
+            if tela_id == "T1":
                 item.set_active(True)
+            elif tela_id == "T2":
+                pass  # ativo nesta iteração
+            else:
+                item.setEnabled(False)
+                item.setToolTip(f"{label} — disponível em iteração futura")
+            item.activated_with_tela.connect(self._navegar_para)
             rail_layout.addWidget(item)
             self._side_items[tela_id] = item
 
@@ -167,11 +169,23 @@ class MainWindow(QMainWindow):
         self._t1.importacao_solicitada.connect(self._on_importar_solicitado)
         self._central_stack.addWidget(self._t1)
 
+        # T2 — Importação (controller persistente — uma única QThread por sessão)
+        self._import_controller = ImportacaoController(parent=self)
+        self._t2 = T2Importacao(controller=self._import_controller)
+        self._t2.importacao_concluida.connect(self._on_importacao_concluida)
+        self._central_stack.addWidget(self._t2)
+
         h.addWidget(self._central_stack, 1)
         self.setCentralWidget(central)
 
         # Carregamento inicial dos clientes
         self._t1.recarregar()
+
+        # Mapa tela_id → widget no stack
+        self._tela_widgets: dict[str, QWidget] = {
+            "T1": self._t1,
+            "T2": self._t2,
+        }
 
     # ------------------------------------------------------------
     # Statusbar
@@ -207,11 +221,33 @@ class MainWindow(QMainWindow):
         )
 
     def _on_importar_solicitado(self) -> None:
-        Toast.show_info(
-            self,
-            "Tela de importação (T2) chegará na próxima iteração — "
-            "use a CLI: primetax-sped import <pasta>",
-        )
+        self._navegar_para("T2")
+
+    def _on_importacao_concluida(self, sucessos: int) -> None:
+        if sucessos > 0:
+            self._t1.recarregar()
+
+    # ------------------------------------------------------------
+    # Navegação entre telas
+    # ------------------------------------------------------------
+
+    def _navegar_para(self, tela_id: str) -> None:
+        widget = self._tela_widgets.get(tela_id)
+        if widget is None:
+            return
+        self._central_stack.setCurrentWidget(widget)
+        for tid, item in self._side_items.items():
+            item.set_active(tid == tela_id)
+
+    def closeEvent(self, ev) -> None:  # noqa: N802 (Qt API)
+        # Encerra o worker thread de importação limpamente
+        try:
+            self._t2.shutdown()
+        except Exception:
+            pass
+        self._settings.setValue("MainWindow/geometry", self.saveGeometry())
+        self._settings.setValue("MainWindow/state", self.saveState())
+        super().closeEvent(ev)
 
 
 def run() -> int:
