@@ -1,87 +1,225 @@
 """
-Entry point da aplicação GUI.
+AppShell — janela principal do Primetax SPED Cross-Reference.
 
-Smoke test inicial: abre uma MainWindow vazia com identificação Primetax.
-Componentes e telas são plugados em iterações seguintes.
+Estrutura (Bloco 3 §3.0):
+  ┌─ Menubar (Arquivo / Editar / Cliente / Ferramentas / Ajuda) ──┐
+  │  Side Rail (72px) │ Área Central (T1-T9 conforme navegação)   │
+  │  T1..T9 ícones    │                                           │
+  ├───────────────────┴───────────────────────────────────────────┤
+  │ Status: cliente ativo · banco · última importação · sistema   │
+  └────────────────────────────────────────────────────────────────┘
+
+Sprint 1 da GUI: apenas T1 (Clientes) ativa; demais SideRailItems
+ficam disabled. Persistência de geometria via QSettings (decisão #16
+fechada — sim).
 """
 
 from __future__ import annotations
 
+import logging
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QStatusBar,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.controllers.clientes_controller import ClienteRow, ClientesController
+from src.gui.views.t1_clientes import T1Clientes
+from src.gui.widgets import SideRailItem, Toast
+
 
 APP_NAME = "Primetax SPED Cross-Reference"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
+ORG_NAME = "Primetax Solutions"
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
-    """Janela principal — casca inicial, sem telas T1-T9 ainda."""
+    """Janela principal — esqueleto pronto para hospedar T1-T9."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.resize(1280, 800)
+        self._settings = QSettings(ORG_NAME, "SpedCrossref")
+
+        self._restaurar_geometria()
 
         self._montar_menubar()
-        self._montar_central_placeholder()
+        self._montar_central()
         self._montar_statusbar()
+
+    # ------------------------------------------------------------
+    # Persistência de geometria (decisão #16)
+    # ------------------------------------------------------------
+
+    def _restaurar_geometria(self) -> None:
+        geom = self._settings.value("MainWindow/geometry")
+        if geom:
+            self.restoreGeometry(geom)
+        else:
+            self.resize(1280, 800)
+
+        state = self._settings.value("MainWindow/state")
+        if state:
+            self.restoreState(state)
+
+    def closeEvent(self, ev) -> None:  # noqa: N802 (Qt API)
+        self._settings.setValue("MainWindow/geometry", self.saveGeometry())
+        self._settings.setValue("MainWindow/state", self.saveState())
+        super().closeEvent(ev)
+
+    # ------------------------------------------------------------
+    # Menubar
+    # ------------------------------------------------------------
 
     def _montar_menubar(self) -> None:
         mb = self.menuBar()
 
-        menu_arquivo = mb.addMenu("&Arquivo")
-        act_sair = QAction("&Sair", self)
-        act_sair.setShortcut(QKeySequence("Ctrl+Q"))
-        act_sair.triggered.connect(self.close)
-        menu_arquivo.addAction(act_sair)
+        # Arquivo
+        m_arq = mb.addMenu("&Arquivo")
+        self._act_importar = QAction("Importar &SPED...", self)
+        self._act_importar.setShortcut(QKeySequence("Ctrl+I"))
+        self._act_importar.triggered.connect(self._on_importar_solicitado)
+        m_arq.addAction(self._act_importar)
+        m_arq.addSeparator()
+        sair = QAction("&Sair", self)
+        sair.setShortcut(QKeySequence("Ctrl+Q"))
+        sair.triggered.connect(self.close)
+        m_arq.addAction(sair)
 
         mb.addMenu("&Editar")
         mb.addMenu("&Cliente")
         mb.addMenu("&Ferramentas")
         mb.addMenu("&Ajuda")
 
-    def _montar_central_placeholder(self) -> None:
+    # ------------------------------------------------------------
+    # Área central — side rail + view stack
+    # ------------------------------------------------------------
+
+    def _montar_central(self) -> None:
         central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        central.setStyleSheet("background: #FFFFFF;")
+        h = QHBoxLayout(central)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
 
-        titulo = QLabel("Primetax SPED Cross-Reference")
-        titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        titulo.setStyleSheet("font-size: 24pt; color: #008C95; font-weight: 600;")
-
-        sub = QLabel(
-            f"GUI em construção · versão {APP_VERSION} · "
-            "Sprint 1 (Nível 0 dos componentes)"
+        # --- Side Rail ----------------------------------------
+        rail = QWidget()
+        rail.setObjectName("SideRail")
+        rail.setFixedWidth(72)
+        rail.setStyleSheet(
+            "#SideRail { background: #F7F7F8; border-right: 1px solid #D1D3D6; }"
         )
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setStyleSheet("font-size: 11pt; color: #53565A; margin-top: 8px;")
+        rail_layout = QVBoxLayout(rail)
+        rail_layout.setContentsMargins(0, 8, 0, 8)
+        rail_layout.setSpacing(2)
+        rail_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        layout.addWidget(titulo)
-        layout.addWidget(sub)
+        self._side_items: dict[str, SideRailItem] = {}
+
+        for icon, tela_id, label, shortcut in [
+            ("⌂", "T1", "Clientes",       "Ctrl+1"),
+            ("⇩", "T2", "Importação",     "Ctrl+2"),
+            ("▦", "T3", "Diagnóstico",    "Ctrl+3"),
+            ("⚑", "T4", "Oportunidade",   "Ctrl+4"),
+            ("≣", "T5", "Visualizador",   None),
+            ("⊕", "T6", "Reconciliação",  "Ctrl+6"),
+            ("✎", "T7", "Parecer",        "Ctrl+P"),
+            ("⊙", "T8", "Auditoria",      "Ctrl+H"),
+        ]:
+            item = SideRailItem(icon, tela_id, label, shortcut, parent=rail)
+            if tela_id != "T1":
+                item.setEnabled(False)  # demais virão em iterações seguintes
+                item.setToolTip(f"{label} — disponível em iteração futura")
+            else:
+                item.set_active(True)
+            rail_layout.addWidget(item)
+            self._side_items[tela_id] = item
+
+        rail_layout.addStretch()
+
+        # T9 (config) na base do rail
+        cfg = SideRailItem("⚙", "T9", "Configurações", "Ctrl+,", parent=rail)
+        cfg.setEnabled(False)
+        rail_layout.addWidget(cfg)
+        self._side_items["T9"] = cfg
+
+        h.addWidget(rail)
+
+        # --- Área central (stack das views) -----------------
+        self._central_stack = QStackedWidget()
+        self._central_stack.setStyleSheet("background: #FFFFFF;")
+
+        # T1 — Clientes
+        self._t1 = T1Clientes(controller=ClientesController())
+        self._t1.cliente_aberto.connect(self._on_cliente_aberto)
+        self._t1.importacao_solicitada.connect(self._on_importar_solicitado)
+        self._central_stack.addWidget(self._t1)
+
+        h.addWidget(self._central_stack, 1)
         self.setCentralWidget(central)
+
+        # Carregamento inicial dos clientes
+        self._t1.recarregar()
+
+    # ------------------------------------------------------------
+    # Statusbar
+    # ------------------------------------------------------------
 
     def _montar_statusbar(self) -> None:
         sb = QStatusBar(self)
-        sb.showMessage("Pronto")
+        sb.setStyleSheet(
+            "QStatusBar { background: #F7F7F8; color: #787A80; "
+            "border-top: 1px solid #D1D3D6; font-size: 9pt; }"
+        )
+
+        self._sb_cliente = QLabel("Nenhum cliente ativo")
+        sb.addWidget(self._sb_cliente)
+
+        sb.addPermanentWidget(QLabel(f"Primetax SPED v{APP_VERSION}"))
         self.setStatusBar(sb)
+
+    # ------------------------------------------------------------
+    # Slots — eventos das views
+    # ------------------------------------------------------------
+
+    def _on_cliente_aberto(self, cliente: ClienteRow) -> None:
+        """Por enquanto, T3+ ainda não existem — só atualizamos o status."""
+        self._sb_cliente.setText(
+            f"Cliente: {cliente.razao_social}  ·  AC {cliente.ano_calendario}  "
+            f"·  CNPJ {cliente.cnpj_formatado()}"
+        )
+        Toast.show_info(
+            self,
+            f"{cliente.razao_social} (AC {cliente.ano_calendario}) — "
+            "T3 (Diagnóstico) chegará na próxima iteração",
+        )
+
+    def _on_importar_solicitado(self) -> None:
+        Toast.show_info(
+            self,
+            "Tela de importação (T2) chegará na próxima iteração — "
+            "use a CLI: primetax-sped import <pasta>",
+        )
 
 
 def run() -> int:
+    logging.basicConfig(level=logging.INFO)
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
-    app.setOrganizationName("Primetax Solutions")
+    app.setOrganizationName(ORG_NAME)
 
     window = MainWindow()
     window.show()

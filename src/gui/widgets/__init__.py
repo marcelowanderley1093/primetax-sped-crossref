@@ -11,6 +11,7 @@ from src.gui.widgets.filter_chip import FilterChip
 from src.gui.widgets.inline_message import InlineMessage, MessageLevel
 from src.gui.widgets.money_cell import Money, MoneyCellDelegate, MoneyOptions
 from src.gui.widgets.search_field import SearchField
+from src.gui.widgets.side_rail_item import SideRailItem
 from src.gui.widgets.stat_card import StatCard
 from src.gui.widgets.status_badge import BadgeStatus, StatusBadge
 from src.gui.widgets.toast import Toast, ToastAction, ToastLevel
@@ -34,6 +35,7 @@ __all__ = [
     "MoneyCellDelegate",
     "MoneyOptions",
     "SearchField",
+    "SideRailItem",
     "SpedType",
     "StatCard",
     "StatusBadge",
