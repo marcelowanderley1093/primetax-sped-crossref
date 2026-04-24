@@ -5,6 +5,8 @@ Este pacote começa pelo Nível 0 (primitivos sem dependências entre si).
 """
 
 from src.gui.widgets.codigo_link_button import CodigoLinkButton
+from src.gui.widgets.data_table import ColumnSpec, DataTable
+from src.gui.widgets.money_cell import Money, MoneyCellDelegate, MoneyOptions
 from src.gui.widgets.search_field import SearchField
 from src.gui.widgets.stat_card import StatCard
 from src.gui.widgets.status_badge import BadgeStatus, StatusBadge
@@ -18,6 +20,11 @@ __all__ = [
     "BadgeStatus",
     "BreadcrumbSegment",
     "CodigoLinkButton",
+    "ColumnSpec",
+    "DataTable",
+    "Money",
+    "MoneyCellDelegate",
+    "MoneyOptions",
     "SearchField",
     "SpedType",
     "StatCard",

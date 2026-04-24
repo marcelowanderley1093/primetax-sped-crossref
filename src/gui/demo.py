@@ -23,10 +23,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from decimal import Decimal
+
 from src.gui.widgets import (
     BadgeStatus,
     BreadcrumbSegment,
     CodigoLinkButton,
+    ColumnSpec,
+    DataTable,
     SearchField,
     SpedType,
     StatCard,
@@ -61,8 +65,8 @@ def _divider() -> QFrame:
 class DemoWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Primetax — Galeria de Componentes (Nível 0)")
-        self.resize(960, 720)
+        self.setWindowTitle("Primetax — Galeria de Componentes (Nível 0/1/2)")
+        self.resize(1100, 900)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -98,6 +102,8 @@ class DemoWindow(QMainWindow):
         self._montar_breadcrumb(vbox)
         vbox.addWidget(_divider())
         self._montar_stat_cards(vbox)
+        vbox.addWidget(_divider())
+        self._montar_data_table(vbox)
 
         vbox.addStretch()
         scroll.setWidget(root)
@@ -318,6 +324,83 @@ class DemoWindow(QMainWindow):
             "padding: 6px; background: #E6F3F4; border-radius: 2px;"
         )
         parent.addWidget(self._sc_status)
+
+    # ------------------------------------------------------------
+    # Nível 2 — DataTable
+    # ------------------------------------------------------------
+
+    def _montar_data_table(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title(
+            "DataTable — tabela densa (filtro · ordenação · seleção · export)"
+        ))
+
+        cols = [
+            ColumnSpec(id="regra",      header="Regra",      kind="text",      width=80),
+            ColumnSpec(id="descricao",  header="Descrição",  kind="text",      width=300),
+            ColumnSpec(id="severidade", header="Severidade", kind="badge",     width=110),
+            ColumnSpec(id="impacto",    header="Impacto",    kind="money",     width=140),
+            ColumnSpec(id="evidencia",  header="Linha",      kind="code_link", width=80),
+        ]
+        rows = [
+            {"regra": "CR-07", "descricao": "Tese 69 — exclusão ICMS C170",
+             "severidade": BadgeStatus.ALTO, "impacto": Decimal("523000.00"),
+             "evidencia": {"arquivo": "/p/efd_c.txt", "linha": 1847,
+                           "bloco": "C", "registro": "C170"}},
+            {"regra": "CR-08", "descricao": "Tese 69 em NFC-e (C181/C185)",
+             "severidade": BadgeStatus.ALTO, "impacto": Decimal("87000.00"),
+             "evidencia": {"arquivo": "/p/efd_c.txt", "linha": 4203,
+                           "bloco": "C", "registro": "C181"}},
+            {"regra": "CR-19", "descricao": "Retenções prescritas em 1300/1700",
+             "severidade": BadgeStatus.ALTO, "impacto": Decimal("45000.00"),
+             "evidencia": {"arquivo": "/p/efd_c.txt", "linha": 9120,
+                           "bloco": "1", "registro": "1300"}},
+            {"regra": "CR-22", "descricao": "F150 — estoque de abertura",
+             "severidade": BadgeStatus.MEDIO, "impacto": Decimal("12500.00"),
+             "evidencia": None},
+            {"regra": "CR-26", "descricao": "Tese 69 via M215/M615",
+             "severidade": BadgeStatus.MEDIO, "impacto": Decimal("38000.00"),
+             "evidencia": {"arquivo": "/p/efd_c.txt", "linha": 11502,
+                           "bloco": "M", "registro": "M215"}},
+            {"regra": "CR-43", "descricao": "K155/K355 × I155 (saldos)",
+             "severidade": BadgeStatus.PENDENTE, "impacto": Decimal("0"),
+             "evidencia": None},
+            {"regra": "CR-46", "descricao": "X480 sem M300 — Lei do Bem",
+             "severidade": BadgeStatus.MEDIO, "impacto": Decimal("12000.00"),
+             "evidencia": {"arquivo": "/p/ecf.txt", "linha": 850,
+                           "bloco": "X", "registro": "X480"}},
+            {"regra": "CR-48", "descricao": "Avisos PGE da ECF (9100)",
+             "severidade": BadgeStatus.BAIXO, "impacto": Decimal("0"),
+             "evidencia": {"arquivo": "/p/ecf.txt", "linha": 4827,
+                           "bloco": "9", "registro": "9100"}},
+        ]
+
+        dt = DataTable(cols, rows)
+        dt.setMinimumHeight(380)
+
+        self._dt_status = QLabel("(Clique uma linha · digite no filtro · clique header para ordenar)")
+        self._dt_status.setStyleSheet(
+            "color: #008C95; font-family: 'JetBrains Mono', Consolas; font-size: 10pt;"
+            "padding: 6px; background: #E6F3F4; border-radius: 2px;"
+        )
+
+        dt.row_selected.connect(
+            lambda r: self._dt_status.setText(
+                f"row_selected: {r['regra']} — {r['descricao']}"
+            )
+        )
+        dt.row_activated.connect(
+            lambda r: self._dt_status.setText(
+                f"row_activated (duplo-clique/Enter): {r['regra']}"
+            )
+        )
+        dt.export_requested.connect(
+            lambda rs: self._dt_status.setText(
+                f"export_requested: {len(rs)} linha(s) visíveis seriam exportadas"
+            )
+        )
+
+        parent.addWidget(dt)
+        parent.addWidget(self._dt_status)
 
 
 def run() -> int:
