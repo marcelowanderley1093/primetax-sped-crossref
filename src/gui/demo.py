@@ -25,9 +25,13 @@ from PySide6.QtWidgets import (
 
 from src.gui.widgets import (
     BadgeStatus,
+    BreadcrumbSegment,
     CodigoLinkButton,
+    SearchField,
     SpedType,
+    StatCard,
     StatusBadge,
+    TraceabilityBreadcrumb,
     VersionLabel,
 )
 
@@ -88,6 +92,12 @@ class DemoWindow(QMainWindow):
         self._montar_version_label(vbox)
         vbox.addWidget(_divider())
         self._montar_codigo_link_button(vbox)
+        vbox.addWidget(_divider())
+        self._montar_search_field(vbox)
+        vbox.addWidget(_divider())
+        self._montar_breadcrumb(vbox)
+        vbox.addWidget(_divider())
+        self._montar_stat_cards(vbox)
 
         vbox.addStretch()
         scroll.setWidget(root)
@@ -209,6 +219,105 @@ class DemoWindow(QMainWindow):
             f"linha={payload['linha']}  bloco={payload['bloco']}  "
             f"registro={payload['registro']}"
         )
+
+    # ------------------------------------------------------------
+    # Nível 1 — SearchField, TraceabilityBreadcrumb, StatCard
+    # ------------------------------------------------------------
+
+    def _montar_search_field(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title("SearchField — filtro com debounce 150ms"))
+
+        self._sf_query = QLabel("Digite acima para testar (min 2 chars, 150ms debounce)")
+        self._sf_query.setStyleSheet(
+            "color: #008C95; font-family: 'JetBrains Mono', Consolas; font-size: 10pt;"
+            "padding: 6px; background: #E6F3F4; border-radius: 2px;"
+        )
+
+        sf = SearchField(placeholder="Filtrar 127 linhas...")
+        sf.query_changed.connect(
+            lambda q: self._sf_query.setText(f"query_changed: '{q}'")
+        )
+        sf.cleared.connect(
+            lambda: self._sf_query.setText("cleared")
+        )
+        sf.set_match_count(0, 127)
+
+        parent.addWidget(sf)
+        parent.addWidget(self._sf_query)
+
+    def _montar_breadcrumb(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title("TraceabilityBreadcrumb — rastreabilidade §1"))
+
+        bc = TraceabilityBreadcrumb()
+        bc.set_segments([
+            BreadcrumbSegment(label="Home", target_tela="T1"),
+            BreadcrumbSegment(label="ACME × 2025", target_tela="T3"),
+            BreadcrumbSegment(label="CR-07 Tese 69", target_tela="T4"),
+            BreadcrumbSegment(label="efd_contrib_202501.txt", target_tela="T5"),
+            BreadcrumbSegment(label="L1847"),  # último = atual
+        ])
+        parent.addWidget(bc)
+
+        self._bc_status = QLabel(
+            "Clique num segmento — o breadcrumb faz pop até ali (decisão #30)"
+        )
+        self._bc_status.setStyleSheet(
+            "color: #008C95; font-family: 'JetBrains Mono', Consolas; font-size: 10pt;"
+            "padding: 6px; background: #E6F3F4; border-radius: 2px;"
+        )
+        bc.segment_clicked.connect(
+            lambda i: self._bc_status.setText(
+                f"segment_clicked({i}) → breadcrumb truncado: "
+                f"{' › '.join(s.label for s in bc.segments())}"
+            )
+        )
+        parent.addWidget(self._bc_status)
+
+    def _montar_stat_cards(self, parent: QVBoxLayout) -> None:
+        parent.addWidget(_section_title("StatCard — 4 cards de topo de T3"))
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+
+        c1 = StatCard(title="Oportunidades", clickable=True)
+        c1.set_primary_value("12")
+        c1.set_secondary_value("R$ 847.520 conservador", style="success")
+        c1.set_hint("R$ 1.2M máximo")
+        c1.clicked.connect(lambda: self._sc_status.setText("Card 'Oportunidades' clicado"))
+        row.addWidget(c1)
+
+        c2 = StatCard(title="Divergências", clickable=True)
+        c2.set_primary_value("3")
+        c2.set_secondary_value("Alto: 1", style="error")
+        c2.set_hint("Médio: 2")
+        c2.clicked.connect(lambda: self._sc_status.setText("Card 'Divergências' clicado"))
+        row.addWidget(c2)
+
+        c3 = StatCard(title="Pendências", clickable=True)
+        c3.set_primary_value("8")
+        c3.set_secondary_value("aguardando ECF", style="warning")
+        c3.set_hint("e EFD-ICMS")
+        c3.clicked.connect(lambda: self._sc_status.setText("Card 'Pendências' clicado"))
+        row.addWidget(c3)
+
+        c4 = StatCard(title="Limitações", clickable=False)
+        c4.set_primary_value("2")
+        c4.set_secondary_value("inaplicáveis", style="info")
+        c4.set_hint("(Simples Nacional)")
+        row.addWidget(c4)
+
+        wrap = QWidget()
+        wrap.setLayout(row)
+        parent.addWidget(wrap)
+
+        self._sc_status = QLabel(
+            "Clique num card clickable (os 3 primeiros); o quarto não é clicável"
+        )
+        self._sc_status.setStyleSheet(
+            "color: #008C95; font-family: 'JetBrains Mono', Consolas; font-size: 10pt;"
+            "padding: 6px; background: #E6F3F4; border-radius: 2px;"
+        )
+        parent.addWidget(self._sc_status)
 
 
 def run() -> int:

@@ -5,13 +5,23 @@ Este pacote começa pelo Nível 0 (primitivos sem dependências entre si).
 """
 
 from src.gui.widgets.codigo_link_button import CodigoLinkButton
+from src.gui.widgets.search_field import SearchField
+from src.gui.widgets.stat_card import StatCard
 from src.gui.widgets.status_badge import BadgeStatus, StatusBadge
+from src.gui.widgets.traceability_breadcrumb import (
+    BreadcrumbSegment,
+    TraceabilityBreadcrumb,
+)
 from src.gui.widgets.version_label import SpedType, VersionLabel
 
 __all__ = [
     "BadgeStatus",
+    "BreadcrumbSegment",
     "CodigoLinkButton",
+    "SearchField",
     "SpedType",
+    "StatCard",
     "StatusBadge",
+    "TraceabilityBreadcrumb",
     "VersionLabel",
 ]
