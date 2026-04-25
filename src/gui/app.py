@@ -40,6 +40,7 @@ from src.gui.views.t1_clientes import T1Clientes
 from src.gui.views.t2_importacao import T2Importacao
 from src.gui.views.t3_diagnostico import T3Diagnostico
 from src.gui.views.t4_oportunidade import T4Oportunidade
+from src.gui.views.t5_sped_viewer import T5SpedViewer
 from src.gui.widgets import SideRailItem, Toast
 
 
@@ -151,6 +152,9 @@ class MainWindow(QMainWindow):
             elif tela_id == "T4":
                 item.setEnabled(False)  # habilitado quando há cruzamento aberto
                 item.setToolTip(f"{label} — abra um cruzamento em T3 primeiro")
+            elif tela_id == "T5":
+                item.setEnabled(False)  # habilitado quando há linha SPED aberta
+                item.setToolTip(f"{label} — acessível via evidência em T4")
             else:
                 item.setEnabled(False)
                 item.setToolTip(f"{label} — disponível em iteração futura")
@@ -195,6 +199,11 @@ class MainWindow(QMainWindow):
         self._t4.abrir_sped.connect(self._on_abrir_sped)
         self._central_stack.addWidget(self._t4)
 
+        # T5 — Visualizador SPED (rastreabilidade §1)
+        self._t5 = T5SpedViewer()
+        self._t5.voltar_solicitado.connect(self._on_voltar_de_t5)
+        self._central_stack.addWidget(self._t5)
+
         h.addWidget(self._central_stack, 1)
         self.setCentralWidget(central)
 
@@ -207,6 +216,7 @@ class MainWindow(QMainWindow):
             "T2": self._t2,
             "T3": self._t3,
             "T4": self._t4,
+            "T5": self._t5,
         }
 
     # ------------------------------------------------------------
@@ -259,12 +269,26 @@ class MainWindow(QMainWindow):
         self._navegar_para("T4")
 
     def _on_abrir_sped(self, payload: dict) -> None:
-        """T4 emitiu pedido para abrir T5 — ainda não implementado."""
-        Toast.show_info(
-            self,
-            f"T5 (visualizador SPED) chegará na próxima iteração — "
-            f"{Path(payload.get('arquivo', '')).name}, linha {payload.get('linha')}",
-        )
+        """T4 emitiu pedido para abrir T5 com a linha do SPED original."""
+        cliente = self._t4.cliente_atual()
+        codigo = self._t4.codigo_atual()
+        if cliente is None:
+            return
+        self._side_items["T5"].setEnabled(True)
+        self._side_items["T5"].setToolTip("Visualizador SPED")
+        try:
+            self._t5.carregar(cliente, codigo, payload)
+        except Exception as exc:  # noqa: BLE001
+            Toast.show_error(self, f"Falha ao abrir SPED: {exc}")
+            return
+        self._navegar_para("T5")
+
+    def _on_voltar_de_t5(self) -> None:
+        """Backspace ou clique 'Voltar' em T5 → tela anterior (T4 se houver)."""
+        if self._side_items["T4"].isEnabled():
+            self._navegar_para("T4")
+        else:
+            self._navegar_para("T1")
 
     # ------------------------------------------------------------
     # Navegação entre telas
