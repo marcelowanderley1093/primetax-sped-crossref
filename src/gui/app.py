@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
+from pathlib import Path  # noqa: F401  (usado em _on_abrir_sped)
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QKeySequence
@@ -39,6 +39,7 @@ from src.gui.controllers.importacao_controller import ImportacaoController
 from src.gui.views.t1_clientes import T1Clientes
 from src.gui.views.t2_importacao import T2Importacao
 from src.gui.views.t3_diagnostico import T3Diagnostico
+from src.gui.views.t4_oportunidade import T4Oportunidade
 from src.gui.widgets import SideRailItem, Toast
 
 
@@ -147,6 +148,9 @@ class MainWindow(QMainWindow):
             elif tela_id == "T3":
                 item.setEnabled(False)  # habilitado quando há cliente aberto
                 item.setToolTip(f"{label} — selecione um cliente em T1 primeiro")
+            elif tela_id == "T4":
+                item.setEnabled(False)  # habilitado quando há cruzamento aberto
+                item.setToolTip(f"{label} — abra um cruzamento em T3 primeiro")
             else:
                 item.setEnabled(False)
                 item.setToolTip(f"{label} — disponível em iteração futura")
@@ -183,7 +187,13 @@ class MainWindow(QMainWindow):
         # T3 — Diagnóstico (controller persistente)
         self._diag_controller = DiagnosticoController(parent=self)
         self._t3 = T3Diagnostico(controller=self._diag_controller)
+        self._t3.cruzamento_aberto.connect(self._on_cruzamento_aberto)
         self._central_stack.addWidget(self._t3)
+
+        # T4 — Oportunidade detalhada
+        self._t4 = T4Oportunidade()
+        self._t4.abrir_sped.connect(self._on_abrir_sped)
+        self._central_stack.addWidget(self._t4)
 
         h.addWidget(self._central_stack, 1)
         self.setCentralWidget(central)
@@ -196,6 +206,7 @@ class MainWindow(QMainWindow):
             "T1": self._t1,
             "T2": self._t2,
             "T3": self._t3,
+            "T4": self._t4,
         }
 
     # ------------------------------------------------------------
@@ -236,6 +247,24 @@ class MainWindow(QMainWindow):
     def _on_importacao_concluida(self, sucessos: int) -> None:
         if sucessos > 0:
             self._t1.recarregar()
+
+    def _on_cruzamento_aberto(self, codigo_regra: str) -> None:
+        """Duplo-clique em CR-XX em T3 → carrega T4 e navega."""
+        cliente = self._t3.cliente_atual()
+        if cliente is None:
+            return
+        self._side_items["T4"].setEnabled(True)
+        self._side_items["T4"].setToolTip("Oportunidade · Ctrl+4")
+        self._t4.carregar(cliente, codigo_regra)
+        self._navegar_para("T4")
+
+    def _on_abrir_sped(self, payload: dict) -> None:
+        """T4 emitiu pedido para abrir T5 — ainda não implementado."""
+        Toast.show_info(
+            self,
+            f"T5 (visualizador SPED) chegará na próxima iteração — "
+            f"{Path(payload.get('arquivo', '')).name}, linha {payload.get('linha')}",
+        )
 
     # ------------------------------------------------------------
     # Navegação entre telas

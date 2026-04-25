@@ -77,6 +77,19 @@ from src.models.registros import (
 _SCHEMA = Path(__file__).parent / "schema.sql"
 _BASE_DATA = Path("data/db")
 
+# Migrações aditivas idempotentes — aplicadas após o schema base.
+# Usadas para bancos criados em versões anteriores do projeto.
+# Cada SQL é tentado isoladamente; "duplicate column name" é ignorado.
+_MIGRATIONS_ADITIVAS: list[str] = [
+    # Decisão #12 — revisão por-linha persistida (GUI Sprint).
+    "ALTER TABLE crossref_oportunidades ADD COLUMN revisado_em TEXT",
+    "ALTER TABLE crossref_oportunidades ADD COLUMN revisado_por TEXT",
+    "ALTER TABLE crossref_oportunidades ADD COLUMN nota TEXT",
+    "ALTER TABLE crossref_divergencias ADD COLUMN revisado_em TEXT",
+    "ALTER TABLE crossref_divergencias ADD COLUMN revisado_por TEXT",
+    "ALTER TABLE crossref_divergencias ADD COLUMN nota TEXT",
+]
+
 
 def _caminho_banco(cnpj: str, ano_calendario: int, base_dir: Path | None = None) -> Path:
     base = base_dir if base_dir is not None else _BASE_DATA
@@ -99,9 +112,26 @@ class Repositorio:
         conn = sqlite3.connect(self.caminho)
         try:
             conn.executescript(schema)
+            self._aplicar_migrations(conn)
             conn.commit()
         finally:
             conn.close()
+
+    @staticmethod
+    def _aplicar_migrations(conn: sqlite3.Connection) -> None:
+        """Aplica migrações aditivas idempotentes para bancos pré-existentes.
+
+        SQLite aceita ALTER TABLE ADD COLUMN sem afetar dados. Erros de
+        coluna duplicada são silenciados — significa que a migration já
+        foi aplicada. Outros erros propagam.
+        """
+        for sql in _MIGRATIONS_ADITIVAS:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" in str(exc).lower():
+                    continue  # já aplicada
+                raise
 
     def conexao(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.caminho)
@@ -739,6 +769,61 @@ class Repositorio:
             (cnpj, ano_calendario),
         )
         return [dict(row) for row in cur]
+
+    # ------------------------------------------------------------------
+    # Revisão de achado (decisão #12 do planejamento GUI)
+    # ------------------------------------------------------------------
+
+    def marcar_revisada(
+        self,
+        conn: sqlite3.Connection,
+        achado_id: int,
+        usuario: str,
+        *,
+        tabela: str = "crossref_oportunidades",
+    ) -> None:
+        """Marca um achado como revisado por usuário em timestamp atual.
+
+        `tabela` deve ser 'crossref_oportunidades' ou 'crossref_divergencias';
+        outros valores rejeitados para prevenir SQL injection.
+        """
+        if tabela not in ("crossref_oportunidades", "crossref_divergencias"):
+            raise ValueError(f"Tabela inválida: {tabela!r}")
+        conn.execute(
+            f"UPDATE {tabela} SET revisado_em=?, revisado_por=? WHERE id=?",
+            (_agora(), usuario, achado_id),
+        )
+
+    def desmarcar_revisada(
+        self,
+        conn: sqlite3.Connection,
+        achado_id: int,
+        *,
+        tabela: str = "crossref_oportunidades",
+    ) -> None:
+        if tabela not in ("crossref_oportunidades", "crossref_divergencias"):
+            raise ValueError(f"Tabela inválida: {tabela!r}")
+        conn.execute(
+            f"UPDATE {tabela} SET revisado_em=NULL, revisado_por=NULL WHERE id=?",
+            (achado_id,),
+        )
+
+    def atualizar_nota(
+        self,
+        conn: sqlite3.Connection,
+        achado_id: int,
+        nota: str,
+        *,
+        tabela: str = "crossref_oportunidades",
+    ) -> None:
+        if tabela not in ("crossref_oportunidades", "crossref_divergencias"):
+            raise ValueError(f"Tabela inválida: {tabela!r}")
+        # nota=None → vira NULL; string vazia também vira NULL para consistência
+        valor = nota.strip() if isinstance(nota, str) and nota.strip() else None
+        conn.execute(
+            f"UPDATE {tabela} SET nota=? WHERE id=?",
+            (valor, achado_id),
+        )
 
     def consultar_meses_importados(
         self, conn: sqlite3.Connection, cnpj: str, ano_calendario: int

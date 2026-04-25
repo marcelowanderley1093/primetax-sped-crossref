@@ -1582,6 +1582,9 @@ CREATE INDEX IF NOT EXISTS idx_ecf_y570_cnpj_ano ON ecf_y570(cnpj_declarante, an
 -- Output do motor de cruzamentos
 -- ============================================================
 
+-- Colunas revisado_em/revisado_por/nota: revisão por-linha do auditor
+-- (decisão #12 do planejamento GUI). Persistidas via Repositorio.marcar_revisada
+-- e Repositorio.atualizar_nota; lidas pelo T4 (DetailPanel).
 CREATE TABLE IF NOT EXISTS crossref_oportunidades (
     id                          INTEGER PRIMARY KEY AUTOINCREMENT,
     codigo_regra                TEXT    NOT NULL,
@@ -1593,7 +1596,10 @@ CREATE TABLE IF NOT EXISTS crossref_oportunidades (
     cnpj_declarante             TEXT    NOT NULL,
     ano_mes                     INTEGER,
     ano_calendario              INTEGER NOT NULL,
-    gerado_em                   TEXT    NOT NULL
+    gerado_em                   TEXT    NOT NULL,
+    revisado_em                 TEXT,              -- ISO-8601 ou NULL
+    revisado_por                TEXT,              -- usuário responsável
+    nota                        TEXT               -- texto livre do auditor
 );
 CREATE INDEX IF NOT EXISTS idx_op_cnpj_ano ON crossref_oportunidades(cnpj_declarante, ano_calendario);
 CREATE INDEX IF NOT EXISTS idx_op_regra    ON crossref_oportunidades(codigo_regra);
@@ -1607,6 +1613,9 @@ CREATE TABLE IF NOT EXISTS crossref_divergencias (
     cnpj_declarante  TEXT    NOT NULL,
     ano_mes          INTEGER,
     ano_calendario   INTEGER NOT NULL,
-    gerado_em        TEXT    NOT NULL
+    gerado_em        TEXT    NOT NULL,
+    revisado_em      TEXT,
+    revisado_por     TEXT,
+    nota             TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_div_cnpj_ano ON crossref_divergencias(cnpj_declarante, ano_calendario);

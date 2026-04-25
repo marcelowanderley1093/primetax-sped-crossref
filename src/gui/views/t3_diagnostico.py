@@ -68,6 +68,7 @@ class T3Diagnostico(QWidget):
     """Painel de diagnóstico para um cliente × AC."""
 
     rerodada_concluida = Signal(int, int)   # oportunidades, divergencias
+    cruzamento_aberto = Signal(str)         # codigo_regra (ex: "CR-07")
 
     def __init__(
         self,
@@ -143,6 +144,7 @@ class T3Diagnostico(QWidget):
             empty_message="Nenhum cruzamento corresponde ao filtro.",
         )
         self._tabela.setMinimumHeight(280)
+        self._tabela.row_activated.connect(self._on_cruzamento_ativado)
         cv.addWidget(self._tabela, 1)
 
         # ProgressIndicator (oculto até rerodar)
@@ -295,6 +297,12 @@ class T3Diagnostico(QWidget):
         self._controller.diagnosticar(
             self._cliente_atual.cnpj, self._cliente_atual.ano_calendario
         )
+
+    def _on_cruzamento_ativado(self, row_dict: dict) -> None:
+        """Duplo-clique numa regra abre T4 com seus achados."""
+        codigo = row_dict.get("codigo")
+        if codigo:
+            self.cruzamento_aberto.emit(codigo)
 
     def _on_diagnostico_iniciado(self, cnpj: str, ano: int) -> None:
         # Apenas atualiza label do progress; controller já cuidou.
