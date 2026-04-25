@@ -183,12 +183,59 @@ Limitação operacional: o modelo de persistência é local (SQLite por CNPJ × 
 Análises longitudinais cross-ano ou cross-cliente ainda não têm suporte direto —
 cada banco é consultado individualmente.
 
+## GUI
+
+Além da CLI, há uma interface gráfica em PySide6 cobrindo o caminho crítico
+do auditor (T1 Clientes → T3 Diagnóstico → T4 Oportunidade → T5 Visualizador
+SPED → T7 Parecer; T2 Importação e T8 Auditoria/Logs também ativos).
+
+```
+python -m src.gui.app
+```
+
+A GUI compartilha o mesmo banco SQLite e os mesmos workers da CLI — abrir
+a GUI durante uma operação CLI em curso pode gerar contenção em writes.
+
+## Empacotamento (executável Windows)
+
+A GUI pode ser empacotada como executável standalone via PyInstaller.
+A spec versionada (`packaging/primetax-sped-gui.spec`) embute apenas
+`src/db/schema.sql` e `src/db/migrations/*.sql`; recursos do auditor
+(`data/input/`, `data/output/`, `data/db/`, `data/tabelas-dinamicas-rfb/`)
+ficam **fora do bundle**, ao lado do exe.
+
+Pré-requisito (instala automaticamente o grupo `dev`):
+
+```
+pip install -e ".[dev]"           # ou: uv sync
+```
+
+Build:
+
+```
+python scripts/build_gui.py --clean
+```
+
+Saída: `dist/primetax-sped-gui/primetax-sped-gui.exe` (~6 MB) + pasta
+`_internal/` (~170 MB total). Modo `--onedir` (não `--onefile`) — startup
+mais rápido e debug fácil; `data/tabelas-dinamicas-rfb` versionado no
+projeto continua funcionando porque os parsers usam caminhos relativos
+ao cwd, não ao bundle.
+
+**Premissa de execução:** rodar o exe a partir da raiz do projeto Primetax
+(onde `data/` está). Distribuição típica: a pasta `dist/primetax-sped-gui/`
+inteira vai junto com o checkout do repositório no notebook do auditor.
+
+Sem assinatura de código nem instalador MSI — adequado para distribuição
+interna controlada.
+
 ## Testes
 
 ```
-pytest                          # suite completa (~175 testes)
+pytest                          # suite completa (382 testes)
 pytest tests/crossref/          # apenas cruzamentos
 pytest tests/reports/           # apenas geração de relatórios
+pytest tests/gui/               # apenas GUI (178 testes)
 pytest -v tests/crossref/test_cruzamento_07_tese69.py   # um arquivo específico
 ```
 
