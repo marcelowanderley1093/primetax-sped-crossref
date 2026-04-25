@@ -21,7 +21,7 @@ import sys
 from pathlib import Path  # noqa: F401  (usado em _on_abrir_sped)
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -36,11 +36,13 @@ from PySide6.QtWidgets import (
 from src.gui.controllers.clientes_controller import ClienteRow, ClientesController
 from src.gui.controllers.diagnostico_controller import DiagnosticoController
 from src.gui.controllers.importacao_controller import ImportacaoController
+from src.gui.controllers.parecer_controller import ParecerController
 from src.gui.views.t1_clientes import T1Clientes
 from src.gui.views.t2_importacao import T2Importacao
 from src.gui.views.t3_diagnostico import T3Diagnostico
 from src.gui.views.t4_oportunidade import T4Oportunidade
 from src.gui.views.t5_sped_viewer import T5SpedViewer
+from src.gui.views.t7_parecer import T7Parecer
 from src.gui.widgets import SideRailItem, Toast
 
 
@@ -155,6 +157,9 @@ class MainWindow(QMainWindow):
             elif tela_id == "T5":
                 item.setEnabled(False)  # habilitado quando há linha SPED aberta
                 item.setToolTip(f"{label} — acessível via evidência em T4")
+            elif tela_id == "T7":
+                item.setEnabled(False)  # habilitado quando há cliente aberto
+                item.setToolTip(f"{label} — selecione um cliente em T1 primeiro")
             else:
                 item.setEnabled(False)
                 item.setToolTip(f"{label} — disponível em iteração futura")
@@ -204,8 +209,20 @@ class MainWindow(QMainWindow):
         self._t5.voltar_solicitado.connect(self._on_voltar_de_t5)
         self._central_stack.addWidget(self._t5)
 
+        # T7 — Geração de parecer Word
+        self._parecer_controller = ParecerController(parent=self)
+        self._t7 = T7Parecer(controller=self._parecer_controller)
+        self._central_stack.addWidget(self._t7)
+
         h.addWidget(self._central_stack, 1)
         self.setCentralWidget(central)
+
+        # Atalhos globais — navegação rápida entre telas habilitadas
+        QShortcut(QKeySequence("Ctrl+P"), self, activated=self._atalho_t7)
+        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self._navegar_para("T1"))
+        QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self._navegar_para("T2"))
+        QShortcut(QKeySequence("Ctrl+3"), self, activated=self._atalho_t3)
+        QShortcut(QKeySequence("Ctrl+4"), self, activated=self._atalho_t4)
 
         # Carregamento inicial dos clientes
         self._t1.recarregar()
@@ -217,6 +234,7 @@ class MainWindow(QMainWindow):
             "T3": self._t3,
             "T4": self._t4,
             "T5": self._t5,
+            "T7": self._t7,
         }
 
     # ------------------------------------------------------------
@@ -241,14 +259,17 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------
 
     def _on_cliente_aberto(self, cliente: ClienteRow) -> None:
-        """Carrega o cliente em T3 e navega para a tela."""
+        """Carrega o cliente em T3 (e T7) e navega para o diagnóstico."""
         self._sb_cliente.setText(
             f"Cliente: {cliente.razao_social}  ·  AC {cliente.ano_calendario}  "
             f"·  CNPJ {cliente.cnpj_formatado()}"
         )
         self._side_items["T3"].setEnabled(True)
         self._side_items["T3"].setToolTip("Diagnóstico · Ctrl+3")
+        self._side_items["T7"].setEnabled(True)
+        self._side_items["T7"].setToolTip("Parecer · Ctrl+P")
         self._t3.carregar_cliente(cliente)
+        self._t7.carregar_cliente(cliente)
         self._navegar_para("T3")
 
     def _on_importar_solicitado(self) -> None:
@@ -302,16 +323,25 @@ class MainWindow(QMainWindow):
         for tid, item in self._side_items.items():
             item.set_active(tid == tela_id)
 
+    def _atalho_t3(self) -> None:
+        if self._side_items["T3"].isEnabled():
+            self._navegar_para("T3")
+
+    def _atalho_t4(self) -> None:
+        if self._side_items["T4"].isEnabled():
+            self._navegar_para("T4")
+
+    def _atalho_t7(self) -> None:
+        if self._side_items["T7"].isEnabled():
+            self._navegar_para("T7")
+
     def closeEvent(self, ev) -> None:  # noqa: N802 (Qt API)
-        # Encerra worker threads (importação e diagnóstico) limpamente
-        try:
-            self._t2.shutdown()
-        except Exception:
-            pass
-        try:
-            self._t3.shutdown()
-        except Exception:
-            pass
+        # Encerra worker threads (importação, diagnóstico, parecer) limpamente
+        for view_attr in ("_t2", "_t3", "_t7"):
+            try:
+                getattr(self, view_attr).shutdown()
+            except Exception:
+                pass
         self._settings.setValue("MainWindow/geometry", self.saveGeometry())
         self._settings.setValue("MainWindow/state", self.saveState())
         super().closeEvent(ev)
