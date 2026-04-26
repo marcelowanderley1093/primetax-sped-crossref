@@ -55,6 +55,16 @@ class DiagnosticoView:
     pendencias_recuperaveis: int
     limitacoes_estruturais: int
     cruzamentos: list[CruzamentoRow] = field(default_factory=list)
+    # Sinaliza se o motor encontra o que cruzar. False quando o cliente
+    # × AC tem só SPEDs auxiliares (ex: EFD ICMS/IPI sem EFD-Contribuições)
+    # ou nada importado. Permite que T3 explique o porquê de "0 achados".
+    tem_dados_para_diagnostico: bool = False
+    speds_importados: list[str] = field(default_factory=list)
+    # Caso filial: se o CNPJ atual aparenta ser uma filial (não termina
+    # em 0001-XX) e existe uma matriz com EFD-Contrib importada para o
+    # mesmo AC em data/db/, este campo carrega o CNPJ da matriz. T3
+    # usa para mostrar mensagem informativa em vez de "nada importado".
+    matriz_cnpj_sugerida: str | None = None
 
 
 class DiagnosticoController(QObject):
@@ -93,6 +103,8 @@ class DiagnosticoController(QObject):
                 impacto_maximo_total=Decimal("0"),
                 pendencias_recuperaveis=0, limitacoes_estruturais=0,
                 cruzamentos=[],
+                tem_dados_para_diagnostico=False,
+                speds_importados=[],
             )
 
         conn = repo.conexao()
@@ -100,10 +112,90 @@ class DiagnosticoController(QObject):
             ops = repo.consultar_oportunidades(conn, cnpj, ano_calendario)
             divs = repo.consultar_divergencias(conn, cnpj, ano_calendario)
             ctx = repo.consultar_sped_contexto(conn) or {}
+            # Detecta o que foi importado pra ajudar o T3 a explicar
+            # quando "0 achados" significa "faltando EFD-Contribuições".
+            tipos_importados = self._tipos_importados(conn)
         finally:
             conn.close()
 
-        return self._montar_view(ops, divs, ctx)
+        view = self._montar_view(ops, divs, ctx)
+        view.speds_importados = tipos_importados
+        view.tem_dados_para_diagnostico = (
+            "efd_contribuicoes" in tipos_importados
+            or "ecd" in tipos_importados
+            or "ecf" in tipos_importados
+        )
+        # Filial sem EFD-Contrib + matriz com EFD-Contrib disponível?
+        # T3 usa pra orientar o auditor em vez de mostrar alarme falso.
+        if not view.tem_dados_para_diagnostico:
+            view.matriz_cnpj_sugerida = self._localizar_matriz_com_contrib(
+                cnpj, ano_calendario, repo.caminho.parent.parent,
+            )
+        return view
+
+    @staticmethod
+    def _tipos_importados(conn) -> list[str]:
+        """Lista distinct de sped_tipo registrados em _importacoes."""
+        try:
+            cur = conn.execute(
+                "SELECT DISTINCT sped_tipo FROM _importacoes ORDER BY sped_tipo"
+            )
+            return [r[0] for r in cur]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _localizar_matriz_com_contrib(
+        cnpj_atual: str, ano_calendario: int, base_dir,
+    ) -> str | None:
+        """Para um CNPJ filial, localiza um CNPJ matriz (mesmos 8 primeiros
+        dígitos, terminação 0001-XX) com EFD-Contribuições importada para o
+        mesmo AC. Retorna None quando não há filial ou não há matriz.
+
+        Heurística por CNPJ raiz: primeiros 8 dígitos. Estabelecimento
+        matriz tem ordem '0001'. Filiais têm '0002', '0003', etc.
+        Não usa Receita — apenas o cadastro local de bancos importados.
+        """
+        if len(cnpj_atual) != 14 or not cnpj_atual.isdigit():
+            return None
+        ordem = cnpj_atual[8:12]
+        if ordem == "0001":
+            return None  # já é matriz; nada a sugerir
+
+        cnpj_raiz = cnpj_atual[:8]
+        try:
+            from pathlib import Path
+            import sqlite3
+            base = Path(base_dir)
+            for sub in sorted(base.iterdir()):
+                nome = sub.name
+                if (
+                    not sub.is_dir()
+                    or len(nome) != 14
+                    or not nome.isdigit()
+                    or not nome.startswith(cnpj_raiz)
+                    or nome[8:12] != "0001"
+                ):
+                    continue
+                banco = sub / f"{ano_calendario}.sqlite"
+                if not banco.exists():
+                    continue
+                # Verifica se tem EFD-Contrib importada
+                try:
+                    conn = sqlite3.connect(banco)
+                    try:
+                        n = conn.execute(
+                            "SELECT COUNT(*) FROM efd_contrib_0000"
+                        ).fetchone()[0]
+                    finally:
+                        conn.close()
+                    if n > 0:
+                        return nome
+                except Exception:
+                    continue
+        except Exception:
+            return None
+        return None
 
     # ------------------------------------------------------------
     # Disparo do motor em thread

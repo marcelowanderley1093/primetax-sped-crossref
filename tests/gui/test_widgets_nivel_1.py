@@ -110,6 +110,8 @@ class TestTraceabilityBreadcrumb:
 
     def test_clique_em_segmento_emite_indice(self, qtbot):
         bc = TraceabilityBreadcrumb()
+        # Desliga o botão Voltar para o teste focar nos segmentos.
+        bc.set_voltar_visivel(False)
         qtbot.addWidget(bc)
         bc.set_segments([
             self._seg("Home"),
@@ -119,7 +121,6 @@ class TestTraceabilityBreadcrumb:
         ])
 
         # Encontra o botão do segmento "ACME × 2025" (índice 1)
-        botoes = bc.findChildren(type(bc._layout.itemAt(0).widget()))
         from PySide6.QtWidgets import QPushButton
         botoes = [w for w in bc.findChildren(QPushButton)]
         assert len(botoes) == 3  # 4 segmentos, último é QLabel (atual)
@@ -130,6 +131,7 @@ class TestTraceabilityBreadcrumb:
 
     def test_clique_faz_pop_ate_segmento(self, qtbot):
         bc = TraceabilityBreadcrumb()
+        bc.set_voltar_visivel(False)
         qtbot.addWidget(bc)
         bc.set_segments([
             self._seg("Home"),
@@ -145,6 +147,29 @@ class TestTraceabilityBreadcrumb:
 
         assert len(bc.segments()) == 2
         assert bc.segments()[-1].label == "ACME"
+
+    def test_voltar_solicitado_emite_signal(self, qtbot):
+        bc = TraceabilityBreadcrumb()
+        qtbot.addWidget(bc)
+        bc.set_segments([self._seg("Home"), self._seg("Atual")])
+
+        from PySide6.QtWidgets import QPushButton
+        botoes = bc.findChildren(QPushButton)
+        # Primeiro botão é "← Voltar"
+        assert "Voltar" in botoes[0].text()
+        with qtbot.waitSignal(bc.voltar_solicitado, timeout=500):
+            qtbot.mouseClick(botoes[0], Qt.MouseButton.LeftButton)
+
+    def test_set_voltar_visivel_oculta_botao(self, qtbot):
+        bc = TraceabilityBreadcrumb()
+        qtbot.addWidget(bc)
+        bc.set_segments([self._seg("Home"), self._seg("Atual")])
+        from PySide6.QtWidgets import QPushButton
+        assert any("Voltar" in b.text() for b in bc.findChildren(QPushButton))
+        bc.set_voltar_visivel(False)
+        # Qt deleteLater é assíncrono; espera o event loop processar.
+        qtbot.wait(50)
+        assert not any("Voltar" in b.text() for b in bc.findChildren(QPushButton))
 
     def test_clear_remove_tudo(self, qtbot):
         bc = TraceabilityBreadcrumb()

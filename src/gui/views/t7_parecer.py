@@ -154,10 +154,16 @@ class T7Parecer(QWidget):
 
         cv.addWidget(form_card)
 
-        # ProgressIndicator (oculto até gerar)
+        # ProgressIndicator (oculto até gerar) — fundo sólido para
+        # evitar bleed-through visual em janelas curtas.
         self._progress = ProgressIndicator(mode=ProgressMode.INDETERMINATE)
         self._progress.set_cancellable(False)
         self._progress.setVisible(False)
+        self._progress.setAutoFillBackground(True)
+        self._progress.setStyleSheet(
+            "ProgressIndicator { background: #FFFFFF; "
+            "border-top: 1px solid #D1D3D6; padding: 8px; }"
+        )
         cv.addWidget(self._progress)
 
         # Footer
@@ -312,7 +318,8 @@ class T7Parecer(QWidget):
         self._em_execucao = True
         self._btn_gerar.setEnabled(False)
         self._progress.setVisible(True)
-        self._progress.expand_log(True)
+        # Log fechado por padrão; usuário expande se quiser detalhe.
+        self._progress.expand_log(False)
         self._progress.set_state(ProgressState.RUNNING)
         self._progress.set_label(
             f"Gerando parecer ({codigo_tese})..."

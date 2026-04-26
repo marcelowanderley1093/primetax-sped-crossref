@@ -60,12 +60,12 @@ class StatCard(QFrame):
         self._hovering = False
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setFixedHeight(128)
+        self.setFixedHeight(96)
         self.setMinimumWidth(200)
 
         v = QVBoxLayout(self)
-        v.setContentsMargins(16, 14, 16, 14)
-        v.setSpacing(6)
+        v.setContentsMargins(14, 10, 14, 10)
+        v.setSpacing(4)
 
         self._title = QLabel(title.upper())
         self._title.setStyleSheet(
@@ -76,7 +76,7 @@ class StatCard(QFrame):
 
         self._primary = QLabel("—")
         self._primary.setStyleSheet(
-            f"color: {_COR_VALOR}; font-size: 26pt; font-weight: 700; "
+            f"color: {_COR_VALOR}; font-size: 22pt; font-weight: 700; "
             "background: transparent;"
         )
         self._primary.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

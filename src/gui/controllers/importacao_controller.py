@@ -17,8 +17,6 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Q_ARG,
-    QMetaObject,
     QObject,
     Qt,
     QThread,
@@ -38,6 +36,16 @@ class ImportacaoController(QObject):
     arquivo_concluido = Signal(object)
     lote_concluido = Signal(int, int, int)
 
+    # Signals internos para invocação cross-thread.
+    # Por que via signal e não QMetaObject.invokeMethod com Q_ARG: o
+    # QMetaType do Qt6 não registra `list` por padrão e Q_ARG(list, ...)
+    # falha em runtime ("Unable to find a QMetaType for 'list'") no
+    # bundle PyInstaller. Signals fazem marshalling de tipos Python
+    # automaticamente via QueuedConnection — robusto para qualquer tipo.
+    _disparar_encoding = Signal(str)
+    _disparar_lote = Signal(list)
+    _disparar_cancelar = Signal()
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._thread = QThread()
@@ -50,6 +58,22 @@ class ImportacaoController(QObject):
         self._worker.log_event.connect(self.log_event)
         self._worker.arquivo_concluido.connect(self.arquivo_concluido)
         self._worker.lote_concluido.connect(self.lote_concluido)
+
+        # Conexões cross-thread (QueuedConnection por padrão entre threads)
+        self._disparar_encoding.connect(
+            self._worker.set_encoding_override,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._disparar_lote.connect(
+            self._worker.importar_lote,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        # cancelar é DirectConnection — flag precisa ser tocada mesmo
+        # com o slot importar_lote em execução.
+        self._disparar_cancelar.connect(
+            self._worker.cancelar,
+            Qt.ConnectionType.DirectConnection,
+        )
 
         self._thread.start()
 
@@ -66,29 +90,11 @@ class ImportacaoController(QObject):
         """Inicia importação em thread separada. Não bloqueia."""
         if not arquivos:
             return
-
-        # Aplica encoding override antes do loop
-        QMetaObject.invokeMethod(
-            self._worker,
-            "set_encoding_override",
-            Qt.ConnectionType.QueuedConnection,
-            Q_ARG(str, encoding_override),
-        )
-        QMetaObject.invokeMethod(
-            self._worker,
-            "importar_lote",
-            Qt.ConnectionType.QueuedConnection,
-            Q_ARG(list, [str(a) for a in arquivos]),
-        )
+        self._disparar_encoding.emit(encoding_override)
+        self._disparar_lote.emit([str(a) for a in arquivos])
 
     def cancelar(self) -> None:
-        # DirectConnection — afeta a flag mesmo enquanto o slot importar_lote
-        # está em execução no worker thread.
-        QMetaObject.invokeMethod(
-            self._worker,
-            "cancelar",
-            Qt.ConnectionType.DirectConnection,
-        )
+        self._disparar_cancelar.emit()
 
     def shutdown(self) -> None:
         """Encerra a thread limpamente. Chamar em closeEvent da MainWindow."""

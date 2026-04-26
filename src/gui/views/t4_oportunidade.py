@@ -22,10 +22,12 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -72,12 +74,26 @@ class T4Oportunidade(QWidget):
         v.setContentsMargins(20, 16, 20, 16)
         v.setSpacing(10)
 
-        # Header (título + breadcrumb)
+        # Header — título + "Marcar todas" no canto direito.
+        # Botão sai do footer pra evitar visual de duas botões empilhadas
+        # (Exportar do DataTable + Marcar todas) bem coladas.
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
         self._titulo = QLabel("Oportunidade")
         self._titulo.setStyleSheet(
             "color: #008C95; font-size: 18pt; font-weight: 600;"
         )
-        v.addWidget(self._titulo)
+        header_row.addWidget(self._titulo, 1)
+
+        self._btn_marcar_todas = QPushButton("Marcar todas como revisadas")
+        self._btn_marcar_todas.setStyleSheet(self._qss_btn_secundario())
+        self._btn_marcar_todas.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_marcar_todas.clicked.connect(self._marcar_todas_revisadas)
+        header_row.addWidget(self._btn_marcar_todas, 0, Qt.AlignmentFlag.AlignRight)
+
+        wrap_header = QWidget()
+        wrap_header.setLayout(header_row)
+        v.addWidget(wrap_header)
 
         self._breadcrumb = TraceabilityBreadcrumb()
         v.addWidget(self._breadcrumb)
@@ -102,14 +118,34 @@ class T4Oportunidade(QWidget):
         col_main = QVBoxLayout()
         col_main.setSpacing(8)
 
+        # Resumo dentro de scroll area — base legal pode ter 500+ chars.
+        # Altura mais generosa (320px) cabe métricas + base legal típica
+        # sem rolar; só rola em casos extremos.
         self._resumo = QLabel("")
         self._resumo.setWordWrap(True)
+        self._resumo.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         self._resumo.setStyleSheet(
             "color: #53565A; font-size: 11pt; "
-            "background: #F7F7F8; border: 1px solid #D1D3D6; "
-            "border-radius: 4px; padding: 12px;"
+            "background: transparent; padding: 12px;"
         )
-        col_main.addWidget(self._resumo)
+        self._resumo.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        resumo_scroll = QScrollArea()
+        resumo_scroll.setWidgetResizable(True)
+        resumo_scroll.setWidget(self._resumo)
+        resumo_scroll.setMinimumHeight(180)
+        resumo_scroll.setMaximumHeight(320)
+        resumo_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        resumo_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        resumo_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        resumo_scroll.setStyleSheet(
+            "QScrollArea { background: #F7F7F8; "
+            "border: 1px solid #D1D3D6; border-radius: 4px; }"
+        )
+        col_main.addWidget(resumo_scroll)
 
         self._tabela = DataTable(
             columns=self._construir_colunas(),
@@ -123,27 +159,16 @@ class T4Oportunidade(QWidget):
         self._tabela.row_activated.connect(self._on_evidencia_ativada)
         col_main.addWidget(self._tabela, 1)
 
-        # Footer com botão "Marcar todas revisadas"
-        footer = QHBoxLayout()
-        self._btn_marcar_todas = QPushButton("Marcar todas como revisadas")
-        self._btn_marcar_todas.setStyleSheet(self._qss_btn_secundario())
-        self._btn_marcar_todas.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_marcar_todas.clicked.connect(self._marcar_todas_revisadas)
-        footer.addStretch()
-        footer.addWidget(self._btn_marcar_todas)
-        wrap_footer = QWidget()
-        wrap_footer.setLayout(footer)
-        col_main.addWidget(wrap_footer)
-
         wrap_main = QWidget()
         wrap_main.setLayout(col_main)
         cv.addWidget(wrap_main, 3)
 
-        # Painel lateral — detalhes da evidência selecionada
+        # Painel lateral — detalhes da evidência selecionada.
+        # Embrulhado em QScrollArea: campos_chave + nota + botões podem
+        # passar da altura útil em janelas curtas.
         self._painel = QWidget()
-        self._painel.setMinimumWidth(280)
         self._painel.setStyleSheet(
-            "background: #F7F7F8; border: 1px solid #D1D3D6; border-radius: 4px;"
+            "background: #F7F7F8; border: none;"
         )
         pv = QVBoxLayout(self._painel)
         pv.setContentsMargins(14, 12, 14, 12)
@@ -209,7 +234,23 @@ class T4Oportunidade(QWidget):
         pv.addWidget(self._btn_sped)
 
         pv.addStretch()
-        cv.addWidget(self._painel, 2)
+
+        painel_scroll = QScrollArea()
+        painel_scroll.setWidgetResizable(True)
+        painel_scroll.setMinimumWidth(300)
+        painel_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        painel_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        painel_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        painel_scroll.setStyleSheet(
+            "QScrollArea { background: #F7F7F8; "
+            "border: 1px solid #D1D3D6; border-radius: 4px; }"
+        )
+        painel_scroll.setWidget(self._painel)
+        cv.addWidget(painel_scroll, 2)
 
         self._stack.addWidget(self._conteudo)
         v.addWidget(self._stack, 1)
@@ -267,18 +308,31 @@ class T4Oportunidade(QWidget):
             "ok": "OK", "pendente": "PENDENTE", "na": "N/A",
         }.get(det.severidade_predominante, det.severidade_predominante.upper())
 
+        # Mostra a base legal completa — QLabel com setWordWrap(True)
+        # quebra linha sozinho. Limite de 240 chars truncava no meio
+        # de "pessoa jurídica" e similares; melhor expandir o card
+        # do que mutilar o dispositivo legal.
         base_legal_resumo = (
-            (det.base_legal[:240] + "...") if len(det.base_legal) > 240
-            else det.base_legal
-        ) or "(base legal não disponível na introspecção)"
+            det.base_legal or "(base legal não disponível na introspecção)"
+        )
 
+        # HTML formatado em duas seções claras:
+        # 1. Métricas — uma linha por campo, com line-height generoso
+        # 2. Base legal — separada por espaço em branco, label destacado
         self._resumo.setText(
+            f"<div style='line-height: 160%;'>"
             f"<b>Severidade predominante:</b> {sev_label}<br>"
-            f"<b>Evidências:</b> {det.total_evidencias}  ·  "
-            f"<b>Revisadas:</b> {det.revisadas} / {det.total_evidencias}  ·  "
-            f"<b>Impacto conservador:</b> R$ {self._fmt_brl(det.impacto_conservador_total)}  ·  "
-            f"<b>Impacto máximo:</b> R$ {self._fmt_brl(det.impacto_maximo_total)}<br>"
-            f"<span style='color:#787A80'>{self._html_escape(base_legal_resumo)}</span>"
+            f"<b>Evidências:</b> {det.total_evidencias}"
+            f"&nbsp;&nbsp;·&nbsp;&nbsp;"
+            f"<b>Revisadas:</b> {det.revisadas} / {det.total_evidencias}<br>"
+            f"<b>Impacto conservador:</b> R$ {self._fmt_brl(det.impacto_conservador_total)}<br>"
+            f"<b>Impacto máximo:</b> R$ {self._fmt_brl(det.impacto_maximo_total)}"
+            f"</div>"
+            f"<br>"
+            f"<div style='color: #787A80; line-height: 160%;'>"
+            f"<b>Base legal:</b><br>"
+            f"{self._html_escape(base_legal_resumo)}"
+            f"</div>"
         )
 
     def _popular_tabela(self, evs: list[EvidenciaRow]) -> None:
@@ -308,14 +362,17 @@ class T4Oportunidade(QWidget):
 
     @staticmethod
     def _construir_colunas() -> list[ColumnSpec]:
+        # Larguras dimensionadas pra acomodar header + sort indicator (~12px)
+        # + padding (~16px). "Linha" alinhada à direita pelo kind=int — header
+        # left-aligned, então 100px dá margem segura.
         return [
-            ColumnSpec(id="revisada", header="✓", kind="text", width=40),
+            ColumnSpec(id="revisada", header="Rev.", kind="text", width=60),
             ColumnSpec(id="arquivo", header="Arquivo", kind="text", width=240),
-            ColumnSpec(id="linha", header="Linha", kind="int", width=80),
-            ColumnSpec(id="bloco", header="Bloco", kind="text", width=70),
-            ColumnSpec(id="registro", header="Registro", kind="text", width=90),
+            ColumnSpec(id="linha", header="Linha", kind="int", width=100),
+            ColumnSpec(id="bloco", header="Bloco", kind="text", width=80),
+            ColumnSpec(id="registro", header="Registro", kind="text", width=100),
             ColumnSpec(id="campos", header="Campos-chave (sumário)", kind="text", width=320),
-            ColumnSpec(id="impacto", header="Impacto", kind="money", width=130),
+            ColumnSpec(id="impacto", header="Impacto", kind="money", width=140),
         ]
 
     # ------------------------------------------------------------

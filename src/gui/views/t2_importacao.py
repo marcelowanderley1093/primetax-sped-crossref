@@ -191,10 +191,16 @@ class T2Importacao(QWidget):
         self._tabela.setMinimumHeight(180)
         v.addWidget(self._tabela, 1)
 
-        # Progresso
+        # Progresso — fundo sólido para evitar bleed-through visual
+        # da tabela em janelas curtas.
         self._progress = ProgressIndicator(mode=ProgressMode.DETERMINATE)
         self._progress.set_cancellable(True)
         self._progress.cancel_requested.connect(self._on_cancelar)
+        self._progress.setAutoFillBackground(True)
+        self._progress.setStyleSheet(
+            "ProgressIndicator { background: #FFFFFF; "
+            "border-top: 1px solid #D1D3D6; padding: 8px; }"
+        )
         v.addWidget(self._progress)
 
         # Footer com botões

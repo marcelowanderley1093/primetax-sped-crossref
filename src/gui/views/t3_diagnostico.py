@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -69,6 +69,7 @@ class T3Diagnostico(QWidget):
 
     rerodada_concluida = Signal(int, int)   # oportunidades, divergencias
     cruzamento_aberto = Signal(str)         # codigo_regra (ex: "CR-07")
+    abrir_cliente_sugerido = Signal(str, int)  # cnpj sugerido, ano_calendario
 
     def __init__(
         self,
@@ -82,14 +83,29 @@ class T3Diagnostico(QWidget):
 
         v = QVBoxLayout(self)
         v.setContentsMargins(20, 16, 20, 16)
-        v.setSpacing(12)
+        v.setSpacing(10)
 
-        # Header
+        # Header — título + Rerodar lado a lado, breadcrumb embaixo.
+        # Botão no header é mais descobrível e libera espaço vertical
+        # pra tabela ocupar mais da tela.
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
         self._titulo = QLabel("Diagnóstico")
         self._titulo.setStyleSheet(
             "color: #008C95; font-size: 18pt; font-weight: 600;"
         )
-        v.addWidget(self._titulo)
+        header_row.addWidget(self._titulo, 1)
+
+        self._btn_rerodar = QPushButton("Rerodar diagnóstico (F5)")
+        self._btn_rerodar.setStyleSheet(self._qss_btn_primario())
+        self._btn_rerodar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_rerodar.clicked.connect(self._rerodar)
+        self._btn_rerodar.setEnabled(False)
+        header_row.addWidget(self._btn_rerodar, 0, Qt.AlignmentFlag.AlignRight)
+
+        wrap_header = QWidget()
+        wrap_header.setLayout(header_row)
+        v.addWidget(wrap_header)
 
         self._breadcrumb = TraceabilityBreadcrumb()
         v.addWidget(self._breadcrumb)
@@ -143,29 +159,21 @@ class T3Diagnostico(QWidget):
             with_export=True,
             empty_message="Nenhum cruzamento corresponde ao filtro.",
         )
-        self._tabela.setMinimumHeight(280)
+        self._tabela.setMinimumHeight(320)
         self._tabela.row_activated.connect(self._on_cruzamento_ativado)
         cv.addWidget(self._tabela, 1)
 
-        # ProgressIndicator (oculto até rerodar)
+        # ProgressIndicator (oculto até rerodar) — fundo sólido para
+        # evitar bleed-through visual da tabela atrás dele em janelas curtas.
         self._progress = ProgressIndicator(mode=ProgressMode.INDETERMINATE)
         self._progress.set_cancellable(False)
         self._progress.setVisible(False)
+        self._progress.setAutoFillBackground(True)
+        self._progress.setStyleSheet(
+            "ProgressIndicator { background: #FFFFFF; "
+            "border-top: 1px solid #D1D3D6; padding: 8px; }"
+        )
         cv.addWidget(self._progress)
-
-        # Footer
-        footer = QHBoxLayout()
-        footer.addStretch()
-        self._btn_rerodar = QPushButton("Rerodar diagnóstico (F5)")
-        self._btn_rerodar.setStyleSheet(self._qss_btn_primario())
-        self._btn_rerodar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_rerodar.clicked.connect(self._rerodar)
-        self._btn_rerodar.setEnabled(False)
-        footer.addWidget(self._btn_rerodar)
-
-        wrap_footer = QWidget()
-        wrap_footer.setLayout(footer)
-        cv.addWidget(wrap_footer)
 
         self._stack.addWidget(self._conteudo)
 
@@ -219,6 +227,18 @@ class T3Diagnostico(QWidget):
         self._popular_cards(view)
         self._popular_tabela(view.cruzamentos)
         self._mostrar_aviso_inline(view)
+        # Sem EFD-Contribuições/ECD/ECF, rerodar não tem efeito.
+        # Mantém o botão habilitado mas com tooltip explicativo
+        # quando o usuário hovera — clicar mostra Toast com aviso.
+        if not view.tem_dados_para_diagnostico:
+            self._btn_rerodar.setEnabled(False)
+            self._btn_rerodar.setToolTip(
+                "Importe EFD-Contribuições deste cliente em T2 antes de "
+                "rodar o diagnóstico."
+            )
+        elif not self._em_execucao:
+            self._btn_rerodar.setEnabled(True)
+            self._btn_rerodar.setToolTip("")
 
     def _popular_cards(self, view: DiagnosticoView) -> None:
         self._card_op.set_primary_value(str(view.total_oportunidades))
@@ -266,6 +286,40 @@ class T3Diagnostico(QWidget):
             self._inline_aviso.deleteLater()
             self._inline_aviso = None
 
+        if not view.tem_dados_para_diagnostico:
+            # Caso 1a: filial com só EFD ICMS/IPI + matriz tem EFD-Contrib
+            # disponível. Mensagem orienta abrir a matriz, sem alarme.
+            if view.matriz_cnpj_sugerida:
+                cnpj_fmt = self._fmt_cnpj(view.matriz_cnpj_sugerida)
+                self._inline_aviso = InlineMessage(
+                    MessageLevel.INFO,
+                    f"Este CNPJ aparenta ser uma filial. A análise PIS/COFINS "
+                    f"vive na EFD-Contribuições da matriz (CNPJ {cnpj_fmt}), "
+                    f"que já está importada para este ano. Abra a matriz em "
+                    f"T1 para rodar o diagnóstico completo.",
+                    action_label=f"Abrir matriz {cnpj_fmt}",
+                )
+                ac = self._cliente_atual.ano_calendario if self._cliente_atual else 0
+                self._inline_aviso.action_triggered.connect(
+                    lambda c=view.matriz_cnpj_sugerida, a=ac:
+                        self.abrir_cliente_sugerido.emit(c, a)
+                )
+                self._inline_layout.addWidget(self._inline_aviso)
+                return
+
+            # Caso 1b: ningúem importado, ou só EFD ICMS sem matriz disponível.
+            speds = ", ".join(view.speds_importados) if view.speds_importados else "nenhum"
+            self._inline_aviso = InlineMessage(
+                MessageLevel.WARNING,
+                f"Este cliente × ano-calendário não tem EFD-Contribuições "
+                f"importada (SPEDs presentes: {speds}). Os cruzamentos da "
+                f"Sprint 1 rodam sobre EFD-Contribuições — importe-a em "
+                f"T2 antes de rodar o diagnóstico.",
+            )
+            self._inline_layout.addWidget(self._inline_aviso)
+            return
+
+        # Caso 2: tem dados mas ninguém apertou F5 ainda.
         sem_dados = (
             view.total_oportunidades == 0
             and view.total_divergencias == 0
@@ -293,7 +347,9 @@ class T3Diagnostico(QWidget):
         self._progress.set_label(
             f"Rerodando diagnóstico de {self._cliente_atual.razao_social}..."
         )
-        self._progress.expand_log(True)
+        # Log fechado por padrão; usuário expande se quiser detalhe.
+        # Evita pular ~200px de altura de uma vez sobre janela já apertada.
+        self._progress.expand_log(False)
         self._controller.diagnosticar(
             self._cliente_atual.cnpj, self._cliente_atual.ano_calendario
         )
@@ -324,6 +380,10 @@ class T3Diagnostico(QWidget):
                 f"{total_div} divergência(s).",
             )
             self.rerodada_concluida.emit(total_op, total_div)
+            # Esconde o progress após 2s — em sucesso, o Toast já comunica
+            # e a tabela atualizada é a evidência. Mantê-lo visível só
+            # rouba espaço vertical.
+            QTimer.singleShot(2000, lambda: self._progress.setVisible(False))
         else:
             self._progress.set_state(ProgressState.ERROR)
             Toast.show_error(
@@ -347,6 +407,12 @@ class T3Diagnostico(QWidget):
             ColumnSpec(id="achados", header="Achados", kind="int", width=80),
             ColumnSpec(id="impacto", header="Impacto Conservador", kind="money", width=170),
         ]
+
+    @staticmethod
+    def _fmt_cnpj(c: str) -> str:
+        if len(c) != 14 or not c.isdigit():
+            return c
+        return f"{c[:2]}.{c[2:5]}.{c[5:8]}/{c[8:12]}-{c[12:]}"
 
     @staticmethod
     def _fmt_brl(v: Decimal) -> str:

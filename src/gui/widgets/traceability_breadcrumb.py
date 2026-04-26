@@ -33,13 +33,23 @@ _COR_SEP = "#787A80"
 
 
 class TraceabilityBreadcrumb(QWidget):
-    """Trilha horizontal de segmentos clicáveis separados por `›`."""
+    """Trilha horizontal de segmentos clicáveis separados por `›`.
 
-    segment_clicked = Signal(int)  # índice do segmento clicado
+    Inclui um botão "← Voltar" no início (Alt+← também funciona globalmente).
+    Sinal `voltar_solicitado` é emitido quando o botão é clicado — MainWindow
+    conecta no `_voltar()` global.
+    """
+
+    segment_clicked = Signal(int)         # índice do segmento clicado
+    voltar_solicitado = Signal()          # botão "← Voltar" clicado
+    # Quando o segmento clicado tem `target_tela` definido, esse signal
+    # é emitido pra MainWindow navegar para a tela correspondente.
+    target_tela_clicked = Signal(str, dict)  # (target_tela, payload)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._segments: list[BreadcrumbSegment] = []
+        self._mostrar_voltar: bool = True
 
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(8, 4, 8, 4)
@@ -78,6 +88,12 @@ class TraceabilityBreadcrumb(QWidget):
     # Render
     # ------------------------------------------------------------
 
+    def set_voltar_visivel(self, visivel: bool) -> None:
+        """Liga/desliga o botão Voltar (default: ligado). Útil para
+        T1 (home) onde Voltar não faz sentido."""
+        self._mostrar_voltar = visivel
+        self._render()
+
     def _render(self) -> None:
         # Limpa layout
         while self._layout.count():
@@ -85,6 +101,10 @@ class TraceabilityBreadcrumb(QWidget):
             w = item.widget()
             if w is not None:
                 w.deleteLater()
+
+        if self._mostrar_voltar:
+            self._layout.addWidget(self._build_voltar_btn())
+            self._layout.addWidget(self._build_separator())
 
         total = len(self._segments)
         for i, seg in enumerate(self._segments):
@@ -94,6 +114,35 @@ class TraceabilityBreadcrumb(QWidget):
                 self._layout.addWidget(self._build_separator())
 
         self._layout.addStretch(1)
+
+    def _build_voltar_btn(self) -> QWidget:
+        btn = QPushButton("← Voltar")
+        btn.setFlat(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        btn.setToolTip("Voltar (Alt+←)")
+        btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                color: {_COR_LINK};
+                font-size: 10pt;
+                font-weight: 500;
+                padding: 2px 8px;
+                background: transparent;
+                border: 1px solid {_COR_LINK};
+                border-radius: 2px;
+            }}
+            QPushButton:hover {{
+                color: #FFFFFF;
+                background: {_COR_LINK};
+            }}
+            QPushButton:focus {{
+                outline: 1px solid {_COR_LINK};
+            }}
+            """
+        )
+        btn.clicked.connect(self.voltar_solicitado)
+        return btn
 
     def _build_segment(
         self, idx: int, seg: BreadcrumbSegment, is_last: bool
@@ -145,6 +194,12 @@ class TraceabilityBreadcrumb(QWidget):
 
     def _on_segment_clicked(self, idx: int) -> None:
         # Pop até o segmento (semântica de truncamento — decisão #30).
+        if idx >= len(self._segments):
+            return
+        seg = self._segments[idx]
         self._segments = self._segments[: idx + 1]
         self._render()
         self.segment_clicked.emit(idx)
+        # Se o segmento tem target_tela, dispara navegação real.
+        if seg.target_tela:
+            self.target_tela_clicked.emit(seg.target_tela, dict(seg.payload))

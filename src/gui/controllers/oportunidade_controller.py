@@ -238,11 +238,17 @@ class OportunidadeController(QObject):
 
     @staticmethod
     def _base_legal_de_docstring(codigo_regra: str) -> str:
-        """Extrai trecho de base legal do docstring do módulo da regra.
+        """Extrai apenas o bloco "Base legal:" do docstring do módulo.
 
-        Best-effort: importa o módulo correspondente e lê __doc__. Se não
-        encontrar, retorna string vazia. Não falha — usado só para exibir.
+        Antes retornava o docstring inteiro (título + base legal + dependências
+        + comentários internos), o que poluía o resumo no T4. Agora extrai
+        só a seção legal, mesma regex usada no RegrasController.
         """
+        import re
+        re_base_legal = re.compile(
+            r"Base legal:?\s*\n?(.+?)(?:\n\s*\n|$)",
+            re.DOTALL | re.IGNORECASE,
+        )
         try:
             from src.crossref import engine
             for grupo in (
@@ -253,7 +259,12 @@ class OportunidadeController(QObject):
                 for modulo in grupo:
                     cod = getattr(modulo, "CODIGO_REGRA", None)
                     if cod == codigo_regra:
-                        return (modulo.__doc__ or "").strip()
+                        doc = (modulo.__doc__ or "").strip()
+                        m = re_base_legal.search(doc)
+                        if m:
+                            return re.sub(r"\s+", " ", m.group(1).strip())
+                        # Fallback: docstring inteiro se não encontrar marcador
+                        return doc
         except Exception:
             return ""
         return ""

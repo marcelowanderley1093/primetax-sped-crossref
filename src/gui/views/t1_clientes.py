@@ -132,6 +132,20 @@ class T1Clientes(QWidget):
             return None
         return self._rows[idx]
 
+    def localizar_cliente_por_cnpj(
+        self, cnpj: str, ano_calendario: int | None = None,
+    ) -> ClienteRow | None:
+        """Procura cliente carregado pelo CNPJ (e AC opcional). Útil
+        para navegação sugerida (ex: T3 sugere abrir matriz quando
+        filial não tem EFD-Contrib).
+        """
+        for r in self._rows:
+            if r.cnpj != cnpj:
+                continue
+            if ano_calendario is None or r.ano_calendario == ano_calendario:
+                return r
+        return None
+
     # ------------------------------------------------------------
     # Internos
     # ------------------------------------------------------------

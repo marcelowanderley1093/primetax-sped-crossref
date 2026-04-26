@@ -32,6 +32,8 @@ class _StubController(QObject):
             impacto_maximo_total=Decimal("0"),
             pendencias_recuperaveis=0, limitacoes_estruturais=0,
             cruzamentos=[],
+            tem_dados_para_diagnostico=True,
+            speds_importados=["efd_contribuicoes"],
         )
         self.solicitacoes = []
 
@@ -95,6 +97,8 @@ class TestT3ComCliente:
                 CruzamentoRow("CR-07", "Tese 69", "alto", 127, Decimal("523000")),
                 CruzamentoRow("CR-19", "Retenções", "alto", 2, Decimal("45000")),
             ],
+            tem_dados_para_diagnostico=True,
+            speds_importados=["efd_contribuicoes"],
         )
         ctrl = _StubController(view=view)
         t3 = T3Diagnostico(controller=ctrl)
@@ -159,6 +163,8 @@ class TestT3ComCliente:
             impacto_conservador_total=Decimal("0"),
             impacto_maximo_total=Decimal("0"),
             pendencias_recuperaveis=2, limitacoes_estruturais=0,
+            tem_dados_para_diagnostico=True,
+            speds_importados=["efd_contribuicoes"],
             cruzamentos=[
                 CruzamentoRow("CR-01", "Integridade", "pendente", 0, Decimal("0")),
                 CruzamentoRow("CR-07", "Tese 69", "pendente", 0, Decimal("0")),
@@ -170,3 +176,28 @@ class TestT3ComCliente:
         t3.carregar_cliente(_cliente())
         # Inline aviso deve estar presente
         assert t3._inline_aviso is not None
+
+    def test_sem_efd_contrib_mostra_warning_e_desabilita_rerodar(self, qtbot):
+        # Cliente que tem só EFD ICMS/IPI importada — motor não tem o
+        # que cruzar, T3 deve avisar claramente e desabilitar o F5.
+        view = DiagnosticoView(
+            total_oportunidades=0, total_divergencias=0,
+            impacto_conservador_total=Decimal("0"),
+            impacto_maximo_total=Decimal("0"),
+            pendencias_recuperaveis=0, limitacoes_estruturais=0,
+            cruzamentos=[],
+            tem_dados_para_diagnostico=False,
+            speds_importados=["efd_icms"],
+        )
+        ctrl = _StubController(view=view)
+        t3 = T3Diagnostico(controller=ctrl)
+        qtbot.addWidget(t3)
+        t3.carregar_cliente(_cliente())
+
+        assert t3._inline_aviso is not None
+        from PySide6.QtWidgets import QLabel
+        textos = [
+            l.text() for l in t3._inline_aviso.findChildren(QLabel)
+        ]
+        assert any("EFD-Contribuições" in t for t in textos)
+        assert not t3._btn_rerodar.isEnabled()
