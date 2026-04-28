@@ -27,8 +27,13 @@ from src.parsers.blocos.bloco_i_ecd import (
     parsear_i150,
     parsear_i155,
     parsear_i200,
+    parsear_i250,
 )
-from src.parsers.blocos.bloco_j_ecd import parsear_j005, parsear_j150
+from src.parsers.blocos.bloco_j_ecd import (
+    parsear_j005,
+    parsear_j100,
+    parsear_j150,
+)
 from src.parsers.common.encoding import detectar_encoding
 
 logger = logging.getLogger(__name__)
@@ -36,8 +41,8 @@ logger = logging.getLogger(__name__)
 _TIPOS_RELEVANTES = frozenset({
     "0000", "0001",
     "C001", "C050", "C155", "C990",
-    "I001", "I010", "I050", "I051", "I150", "I155", "I200", "I990",
-    "J001", "J005", "J150", "J990",
+    "I001", "I010", "I050", "I051", "I150", "I155", "I200", "I250", "I990",
+    "J001", "J005", "J100", "J150", "J990",
     "9001", "9900", "9999",
 })
 
@@ -82,7 +87,7 @@ def importar(
     Importa um arquivo ECD para o banco SQLite longitudinal.
 
     Persiste: ecd_0000, ecd_i010, ecd_i050, ecd_i150, ecd_i155,
-              ecd_i200, ecd_j005, ecd_j150.
+              ecd_i200, ecd_i250, ecd_j005, ecd_j100, ecd_j150.
     Atualiza: disponibilidade_ecd → 'importada'.
     """
     arquivo_str = str(caminho.resolve())
@@ -97,6 +102,7 @@ def importar(
 
     ctx: dict = {}
     i150_atual: int | None = None
+    i200_atual: int | None = None  # pai do I250 corrente
     j005_atual: int | None = None
     erros_parse: list[str] = []
 
@@ -108,7 +114,9 @@ def importar(
     regs_i150: list = []
     regs_i155: list = []
     regs_i200: list = []
+    regs_i250: list = []
     regs_j005: list = []
+    regs_j100: list = []
     regs_j150: list = []
 
     for num_linha, linha_raw in enumerate(linhas_raw, start=1):
@@ -215,12 +223,27 @@ def importar(
 
             elif reg_tipo == "I200" and ctx:
                 r = parsear_i200(campos, num_linha, arquivo_str)
+                i200_atual = num_linha
                 regs_i200.append(r)
+
+            elif reg_tipo == "I250" and ctx:
+                if i200_atual is None:
+                    logger.warning("I250 orphan at line %d — no I200 parent", num_linha)
+                    i200_atual = 0
+                r = parsear_i250(campos, num_linha, arquivo_str, i200_atual)
+                regs_i250.append(r)
 
             elif reg_tipo == "J005" and ctx:
                 r = parsear_j005(campos, num_linha, arquivo_str)
                 j005_atual = num_linha
                 regs_j005.append(r)
+
+            elif reg_tipo == "J100" and ctx:
+                if j005_atual is None:
+                    logger.warning("J100 orphan at line %d — no J005 parent", num_linha)
+                    j005_atual = 0
+                r = parsear_j100(campos, num_linha, arquivo_str, j005_atual)
+                regs_j100.append(r)
 
             elif reg_tipo == "J150" and ctx:
                 if j005_atual is None:
@@ -298,8 +321,12 @@ def importar(
                 repo.inserir_ecd_i155(conn, r, ctx_i155)
             for r in regs_i200:
                 repo.inserir_ecd_i200(conn, r, ctx)
+            for r in regs_i250:
+                repo.inserir_ecd_i250(conn, r, ctx)
             for r in regs_j005:
                 repo.inserir_ecd_j005(conn, r, ctx)
+            for r in regs_j100:
+                repo.inserir_ecd_j100(conn, r, ctx)
             for r in regs_j150:
                 repo.inserir_ecd_j150(conn, r, ctx)
             atualizar_disponibilidade(repo, conn, "ecd", "importada")
@@ -311,9 +338,10 @@ def importar(
         conn.close()
 
     logger.info(
-        "ECD %s: I050=%d I155=%d I200=%d J150=%d reconciliacao=%s (encoding=%s)",
+        "ECD %s: I050=%d I155=%d I200=%d I250=%d J100=%d J150=%d reconciliacao=%s (encoding=%s)",
         caminho.name, len(regs_i050), len(regs_i155), len(regs_i200),
-        len(regs_j150), reconciliacao, res_enc.encoding,
+        len(regs_i250), len(regs_j100), len(regs_j150),
+        reconciliacao, res_enc.encoding,
     )
 
     return ResultadoImportacao(
@@ -331,6 +359,8 @@ def importar(
             "I050": len(regs_i050),
             "I155": len(regs_i155),
             "I200": len(regs_i200),
+            "I250": len(regs_i250),
+            "J100": len(regs_j100),
             "J150": len(regs_j150),
         },
         contagens_declaradas={},

@@ -57,7 +57,9 @@ from src.models.registros import (
     RegEcdI150,
     RegEcdI155,
     RegEcdI200,
+    RegEcdI250,
     RegEcdJ005,
+    RegEcdJ100,
     RegEcdJ150,
     RegEcf0000,
     RegEcf0010,
@@ -1672,6 +1674,25 @@ class Repositorio:
             ),
         )
 
+    def inserir_ecd_i250(
+        self, conn: sqlite3.Connection, reg: RegEcdI250, ctx: dict
+    ) -> None:
+        conn.execute(
+            """INSERT INTO ecd_i250
+               (arquivo_origem, linha_arquivo, bloco, registro, cnpj_declarante,
+                dt_ini_periodo, dt_fin_periodo, ano_mes, ano_calendario, cod_ver,
+                i200_linha_arquivo, cod_cta, cod_ccus, vl_deb_cred, ind_dc,
+                hist_lcto_ccus, cod_hist_pad)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                reg.arquivo_origem, reg.linha_arquivo, "I", "I250",
+                *self._ctx(ctx),
+                reg.i200_linha_arquivo, reg.cod_cta, reg.cod_ccus,
+                self._f(reg.vl_deb_cred), reg.ind_dc,
+                reg.hist_lcto_ccus, reg.cod_hist_pad,
+            ),
+        )
+
     def inserir_ecd_j005(
         self, conn: sqlite3.Connection, reg: RegEcdJ005, ctx: dict
     ) -> None:
@@ -1706,6 +1727,28 @@ class Repositorio:
                 reg.ind_cod_agl, reg.nivel_agl, reg.cod_agl_sup,
                 reg.descr_cod_agl, self._f(reg.vl_cta_ini), reg.ind_dc_ini,
                 self._f(reg.vl_cta_fin), reg.ind_dc_fin, reg.ind_grp_dre,
+            ),
+        )
+
+    def inserir_ecd_j100(
+        self, conn: sqlite3.Connection, reg: RegEcdJ100, ctx: dict
+    ) -> None:
+        conn.execute(
+            """INSERT INTO ecd_j100
+               (arquivo_origem, linha_arquivo, bloco, registro, cnpj_declarante,
+                dt_ini_periodo, dt_fin_periodo, ano_mes, ano_calendario, cod_ver,
+                j005_linha_arquivo, nu_ordem, cod_agl, ind_cod_agl, nivel_agl,
+                cod_agl_sup, ind_grp_bal, descr_cod_agl,
+                vl_cta_ini, ind_dc_ini, vl_cta_fin, ind_dc_fin)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                reg.arquivo_origem, reg.linha_arquivo, "J", "J100",
+                *self._ctx(ctx),
+                reg.j005_linha_arquivo, reg.nu_ordem, reg.cod_agl,
+                reg.ind_cod_agl, reg.nivel_agl, reg.cod_agl_sup,
+                reg.ind_grp_bal, reg.descr_cod_agl,
+                self._f(reg.vl_cta_ini), reg.ind_dc_ini,
+                self._f(reg.vl_cta_fin), reg.ind_dc_fin,
             ),
         )
 
