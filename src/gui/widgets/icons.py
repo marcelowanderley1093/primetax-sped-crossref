@@ -44,6 +44,7 @@ class IconName(Enum):
     SHIELD_CHECK = "shield_check"
     SETTINGS = "settings"
     LIST_CHECK = "list_check"
+    LEDGER = "ledger"
 
 
 def paint_icon(
@@ -259,6 +260,27 @@ def _draw_list_check(p: QPainter) -> None:
     p.drawLine(12, 19, 21, 19)
 
 
+def _draw_ledger(p: QPainter) -> None:
+    # Livro aberto com espinha central — análise contábil
+    # Capa esquerda
+    p.drawLine(4, 5, 4, 19)
+    p.drawLine(4, 5, 12, 5)
+    p.drawLine(4, 19, 12, 19)
+    # Espinha
+    p.drawLine(12, 4, 12, 20)
+    # Capa direita
+    p.drawLine(20, 5, 20, 19)
+    p.drawLine(12, 5, 20, 5)
+    p.drawLine(12, 19, 20, 19)
+    # Linhas internas (texto da página)
+    p.drawLine(6, 9, 10, 9)
+    p.drawLine(6, 12, 10, 12)
+    p.drawLine(6, 15, 10, 15)
+    p.drawLine(14, 9, 18, 9)
+    p.drawLine(14, 12, 18, 12)
+    p.drawLine(14, 15, 18, 15)
+
+
 _DRAWERS = {
     IconName.HOME: _draw_home,
     IconName.DOWNLOAD: _draw_download,
@@ -270,4 +292,5 @@ _DRAWERS = {
     IconName.SHIELD_CHECK: _draw_shield_check,
     IconName.SETTINGS: _draw_settings,
     IconName.LIST_CHECK: _draw_list_check,
+    IconName.LEDGER: _draw_ledger,
 }

@@ -45,6 +45,7 @@ from src.gui.views.t4_oportunidade import T4Oportunidade
 from src.gui.views.t5_sped_viewer import T5SpedViewer
 from src.gui.views.t7_parecer import T7Parecer
 from src.gui.views.t8_auditoria import T8Auditoria
+from src.gui.views.t9_contabil import T9Contabil
 from src.gui.widgets import SideRailItem, Toast
 from src.gui.widgets.icons import IconName
 
@@ -155,6 +156,7 @@ class MainWindow(QMainWindow):
             (IconName.GIT_MERGE,    "T6", "Reconciliação", "Ctrl+6"),
             (IconName.PEN,          "T7", "Parecer",       "Ctrl+P"),
             (IconName.SHIELD_CHECK, "T8", "Auditoria",     "Ctrl+H"),
+            (IconName.LEDGER,       "T9", "Contábil",      "Ctrl+B"),
         ]:
             item = SideRailItem(icon, tela_id, label, shortcut, parent=rail)
             if tela_id == "T1":
@@ -179,6 +181,9 @@ class MainWindow(QMainWindow):
             elif tela_id == "T0":
                 # Regras é read-only, sempre acessível.
                 pass
+            elif tela_id == "T9":
+                item.setEnabled(False)  # habilitado quando há cliente aberto
+                item.setToolTip(f"{label} — selecione um cliente em T1 primeiro")
             else:
                 item.setEnabled(False)
                 item.setToolTip(f"{label} — disponível em iteração futura")
@@ -188,11 +193,8 @@ class MainWindow(QMainWindow):
 
         rail_layout.addStretch()
 
-        # T9 (config) na base do rail
-        cfg = SideRailItem(IconName.SETTINGS, "T9", "Configurações", "Ctrl+,", parent=rail)
-        cfg.setEnabled(False)
-        rail_layout.addWidget(cfg)
-        self._side_items["T9"] = cfg
+        # Configurações foi removido do side rail — vive na menubar
+        # (Ferramentas > Configurações...) quando implementado.
 
         h.addWidget(rail)
 
@@ -242,12 +244,17 @@ class MainWindow(QMainWindow):
         self._t0 = T0Regras()
         self._central_stack.addWidget(self._t0)
 
+        # T9 — Análise Contábil (BP, DRE, Razão, Despesas × Crédito PIS/COFINS)
+        self._t9 = T9Contabil()
+        self._central_stack.addWidget(self._t9)
+
         h.addWidget(self._central_stack, 1)
         self.setCentralWidget(central)
 
         # Atalhos globais — navegação rápida entre telas habilitadas
         QShortcut(QKeySequence("Ctrl+P"), self, activated=self._atalho_t7)
         QShortcut(QKeySequence("Ctrl+H"), self, activated=self._atalho_t8)
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self._atalho_t9)
         QShortcut(QKeySequence("Ctrl+R"), self, activated=lambda: self._navegar_para("T0"))
         QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self._navegar_para("T1"))
         QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self._navegar_para("T2"))
@@ -268,6 +275,7 @@ class MainWindow(QMainWindow):
             "T5": self._t5,
             "T7": self._t7,
             "T8": self._t8,
+            "T9": self._t9,
         }
 
         # Conecta o botão "← Voltar" do breadcrumb de cada view ao
@@ -314,9 +322,12 @@ class MainWindow(QMainWindow):
         self._side_items["T7"].setToolTip("Parecer · Ctrl+P")
         self._side_items["T8"].setEnabled(True)
         self._side_items["T8"].setToolTip("Auditoria · Ctrl+H")
+        self._side_items["T9"].setEnabled(True)
+        self._side_items["T9"].setToolTip("Análise Contábil · Ctrl+B")
         self._t3.carregar_cliente(cliente)
         self._t7.carregar_cliente(cliente)
         self._t8.carregar_cliente(cliente)
+        self._t9.carregar_cliente(cliente)
         self._navegar_para("T3")
 
     def _on_importar_solicitado(self) -> None:
@@ -435,6 +446,10 @@ class MainWindow(QMainWindow):
     def _atalho_t8(self) -> None:
         if self._side_items["T8"].isEnabled():
             self._navegar_para("T8")
+
+    def _atalho_t9(self) -> None:
+        if self._side_items["T9"].isEnabled():
+            self._navegar_para("T9")
 
     def closeEvent(self, ev) -> None:  # noqa: N802 (Qt API)
         # Encerra worker threads (importação, diagnóstico, parecer) limpamente
