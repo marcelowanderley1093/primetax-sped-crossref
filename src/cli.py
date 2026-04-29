@@ -154,7 +154,7 @@ def cmd_import(args: argparse.Namespace) -> int:
             print(
                 f"  OK  [{tipo}] {arq.name}"
                 f" — CNPJ {resultado.cnpj}"
-                f" {resultado.dt_ini}→{resultado.dt_fin}"
+                f" {resultado.dt_ini}->{resultado.dt_fin}"
                 f" (encoding={resultado.encoding_origem}/{resultado.encoding_confianca})"
             )
         else:
