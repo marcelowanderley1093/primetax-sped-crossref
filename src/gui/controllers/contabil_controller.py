@@ -103,7 +103,7 @@ class DespesaVsCredito:
     """Conta de despesa (cod_nat='04') × créditos PIS/COFINS no período."""
     cod_cta: str
     descricao: str
-    saldo_periodo: Decimal           # soma vl_deb - vl_cred do I155 no AC
+    saldo_periodo: Decimal           # SUM(vl_deb) do I155 no AC = despesa bruta incorrida
     credito_pis_cofins: Decimal      # F100+F120+F130 no mesmo cod_cta
     tem_credito: bool
     # Marcação subjetiva do auditor (Tema 779 essencialidade).
@@ -120,7 +120,7 @@ class ImobilizadoVsCredito:
     apenas CST 98/99 em C170)."""
     cod_cta: str
     descricao: str
-    saldo_periodo: Decimal           # saldo da conta no AC (D - C de I155)
+    saldo_periodo: Decimal           # SUM(vl_deb) do I155 no AC = aquisições/aumentos do ano
     credito_f120: Decimal            # base PIS de F120 (encargos depreciação)
     credito_f130: Decimal            # base PIS de F130 (aquisição imobilizado)
     tem_credito: bool                # F120 ou F130 com cod_cta match
@@ -596,7 +596,7 @@ class ContabilController:
 
             resultado: list[DespesaVsCredito] = []
             for cod_cta, descricao in contas:
-                saldo = self._saldo_despesa_anual(conn, cod_cta)
+                saldo = self._total_debito_anual(conn, cod_cta)
                 credito = self._credito_pis_cofins_por_cta(conn, cod_cta)
                 marcada, nota = marcadas.get(cod_cta, (False, ""))
                 resultado.append(DespesaVsCredito(
@@ -670,7 +670,7 @@ class ContabilController:
 
             resultado: list[ImobilizadoVsCredito] = []
             for cod_cta, descricao in contas:
-                saldo = self._saldo_despesa_anual(conn, cod_cta)
+                saldo = self._total_debito_anual(conn, cod_cta)
                 f120 = self._credito_de_tabela(conn, cod_cta, "efd_contrib_f120", "vl_bc_cred")
                 f130 = self._credito_de_tabela(conn, cod_cta, "efd_contrib_f130", "vl_bc_cred")
                 marcada, nota = marcadas.get(cod_cta, (False, ""))
@@ -783,25 +783,39 @@ class ContabilController:
             )"""
         )
 
-    def _saldo_despesa_anual(
+    def _total_debito_anual(
         self, conn: sqlite3.Connection, cod_cta: str,
     ) -> Decimal:
-        """Saldo movimentado de uma conta de despesa no ano (D - C).
-        Conta de resultado de despesa: tipicamente débito = positivo."""
+        """Total debitado em uma conta de resultado/imobilizado no AC.
+
+        Para conta de despesa (cod_nat='04'): representa a despesa bruta
+        incorrida no ano. Em escrituração com apuração trimestral, a
+        conta é zerada via crédito ao final de cada trimestre (transferência
+        ao resultado), então SUM(vl_deb)-SUM(vl_cred)=0 — fórmula errada.
+        SUM(vl_deb) isolado dá a despesa real, base correta para
+        diagnóstico Tema 779 (REsp 1.221.170/PR — essencialidade).
+
+        Para conta de imobilizado (cod_nat='01'): representa as aquisições
+        e aumentos do ano. Coerente com cruzamento contra F130 (base de
+        crédito sobre aquisição de imobilizado).
+
+        Bug-003 — solução conservadora (Opção i). Refinamentos pendentes:
+        (ii) distinguir transferência de apuração vs estorno legítimo;
+        (iii) computar via I250 excluindo contrapartidas de apuração.
+        Ver docs/debitos-conhecidos.md.
+        """
         try:
             row = conn.execute(
-                "SELECT COALESCE(SUM(vl_deb), 0), COALESCE(SUM(vl_cred), 0)"
+                "SELECT COALESCE(SUM(vl_deb), 0)"
                 " FROM ecd_i155"
                 " WHERE cnpj_declarante=? AND ano_calendario=? AND cod_cta=?",
                 (self._cnpj, self._ano, cod_cta),
             ).fetchone()
         except sqlite3.OperationalError:
             return Decimal("0")
-        if row is None:
+        if row is None or row[0] is None:
             return Decimal("0")
-        debito = Decimal(str(row[0] or 0))
-        credito = Decimal(str(row[1] or 0))
-        return debito - credito
+        return Decimal(str(row[0]))
 
     def _credito_pis_cofins_por_cta(
         self, conn: sqlite3.Connection, cod_cta: str,

@@ -355,6 +355,74 @@ class TestDespesasVsCredito:
         ctrl = ContabilController(cnpj="00000000000100", ano_calendario=2025, base_dir=base)
         assert ctrl.listar_despesas_vs_credito() == []
 
+    def test_apuracao_trimestral_contabiliza_despesa_bruta(self, tmp_path):
+        """Bug-003 regression — conta de resultado em escrituração com
+        apuração trimestral é zerada via crédito ao fim do trimestre
+        (transferência ao resultado). SUM(vl_deb) - SUM(vl_cred) daria
+        zero, mascarando a despesa real. saldo_periodo deve refletir
+        a despesa bruta incorrida (SUM vl_deb), base correta para
+        diagnóstico Tema 779."""
+        base = _criar_banco(tmp_path)
+        conn = sqlite3.connect(base / "00000000000100" / "2025.sqlite")
+        try:
+            cnpj, ano = "00000000000100", 2025
+            _inserir_i050(conn, cnpj, ano, "3006", "COMBUSTIVEIS", "04", "A")
+            # 12 meses: vl_deb=10000 cada (despesa mensal incorrida)
+            # vl_cred=30000 em mar/jun/set/dez (apuração trimestral zera o saldo)
+            for mes in range(1, 13):
+                vl_cred = 30000.0 if mes in (3, 6, 9, 12) else 0.0
+                conn.execute(
+                    """INSERT INTO ecd_i155
+                       (arquivo_origem, linha_arquivo, cnpj_declarante,
+                        dt_ini_periodo, dt_fin_periodo, ano_mes, ano_calendario,
+                        cod_ver, i150_linha_arquivo, cod_cta, cod_ccus,
+                        vl_sld_ini, ind_dc_ini, vl_deb, vl_cred,
+                        vl_sld_fin, ind_dc_fin)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        "/tmp/x.txt", 999 + mes, cnpj,
+                        f"{ano}-01-01", f"{ano}-12-31",
+                        ano * 100 + mes, ano,
+                        "9.00", 0, "3006", "",
+                        0, "D", 10000.0, vl_cred, 0, "D",
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        ctrl = ContabilController(cnpj="00000000000100", ano_calendario=2025, base_dir=base)
+        linhas = ctrl.listar_despesas_vs_credito()
+        assert len(linhas) == 1
+        # SUM(vl_deb)=120000, SUM(vl_cred)=120000 → fórmula antiga: 0 (errado)
+        # Fórmula correta: SUM(vl_deb) = 120000
+        assert linhas[0].cod_cta == "3006"
+        assert linhas[0].saldo_periodo == Decimal("120000")
+        assert linhas[0].tem_credito is False  # sem F100/F120/F130
+
+    def test_sem_apuracao_trimestral_mantem_despesa_bruta(self, tmp_path):
+        """Caso base — conta de despesa sem apuração trimestral
+        (cenário simples sem contrabalanço via crédito). saldo_periodo
+        continua sendo SUM(vl_deb), comportamento equivalente ao
+        que SUM(vl_deb) - SUM(vl_cred) daria quando vl_cred=0."""
+        base = _criar_banco(tmp_path)
+        conn = sqlite3.connect(base / "00000000000100" / "2025.sqlite")
+        try:
+            cnpj, ano = "00000000000100", 2025
+            _inserir_i050(conn, cnpj, ano, "3017", "ENERGIA ELETRICA", "04", "A")
+            # Único mês com débito, sem crédito (sem apuração intermediária)
+            _inserir_i155(conn, cnpj, ano, "3017", 12000, 0)
+            conn.commit()
+        finally:
+            conn.close()
+
+        ctrl = ContabilController(cnpj="00000000000100", ano_calendario=2025, base_dir=base)
+        linhas = ctrl.listar_despesas_vs_credito()
+        assert len(linhas) == 1
+        assert linhas[0].cod_cta == "3017"
+        assert linhas[0].saldo_periodo == Decimal("12000")
+        assert linhas[0].tem_credito is False
+
 
 # --------------------------------------------------------------------
 # Contas movimentadas (combo do razão)
