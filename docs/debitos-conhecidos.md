@@ -123,3 +123,72 @@ Três alternativas (decisão de design para sprint dedicada):
 - Validação empírica em 2026-04-29 (sessão Norte Geradores)
 - Tabela _importacoes: registro completo de imports históricos
   já existe — base para Solução 3
+
+---
+
+## BUG-003 — Despesa em apuração trimestral retornava zero (refinamento parcial pendente)
+
+**Status:** mitigado por correção parcial (Opção i aplicada).
+Refinamento via Opção ii ou iii fica como débito parcial caso
+apareça cliente real com estorno legítimo em conta de resultado.
+**Severidade:** alta (era crítico; após fix, reduzido a refinamento)
+**Descoberto em:** 2026-04-29, durante validação T9 contra Norte
+Geradores 2021. Corrigido no commit do mesmo dia.
+
+### Sintoma observado
+
+`ContabilController._saldo_despesa_anual` (agora `_total_debito_anual`)
+calculava `SUM(vl_deb) - SUM(vl_cred)` de `ecd_i155` por conta.
+Para clientes com escrituração em apuração trimestral (despesa
+debitada durante o trimestre e creditada em massa no último mês
+para zerar contra o resultado), `SUM(vl_deb) ≈ SUM(vl_cred)` no
+ano, resultando em zero exato. Consequência: T9 Análise Contábil
+(`listar_despesas_vs_credito` e `listar_imobilizado_vs_credito`)
+reportava 0 oportunidades — invalidando diagnóstico Tema 779.
+
+Exemplo verificado: Norte Geradores 2021, conta 3006 Combustíveis,
+`SUM(vl_deb) = R$ 715.236,93` e `SUM(vl_cred) = R$ 715.236,93`
+(creditadas em mar/jun/set/dez via transferência ao resultado).
+Saldo retornado: 0,00. Após fix: R$ 715.236,93 (despesa bruta
+real, base correta para diagnóstico Tema 779).
+
+### Causa raiz
+
+Método assumia que `vl_deb - vl_cred` representaria despesa
+incorrida, válido apenas para escrituração que NUNCA zera contas
+de resultado durante o ano. Padrão real brasileiro mais comum
+(apuração trimestral ou mensal) zera contas de resultado, e a
+fórmula falha silenciosamente.
+
+### Correção aplicada (Opção i)
+
+- Query reduzida para `SUM(vl_deb)` apenas
+- Método renomeado `_saldo_despesa_anual` → `_total_debito_anual`
+  (nome reflete semântica real)
+- Comentários e docstrings atualizados
+- 2 testes regressivos adicionados
+
+### Refinamentos pendentes
+
+Caso apareça cliente real com **estorno legítimo** em conta de
+resultado (raro, mas possível: nota cancelada lançada em despesa,
+estornada via crédito), a Opção (i) superestima a despesa
+marginalmente. Soluções refinadas:
+
+1. **Opção (ii) — distinguir transferência de estorno.** Identificar
+   créditos cuja contrapartida (via I200/I250) é uma conta de
+   resultado/apuração (cod_nat='03' ou '05') vs uma conta operacional.
+   Subtrair apenas créditos com contrapartida operacional (estornos
+   legítimos), preservar créditos de transferência ao resultado.
+
+2. **Opção (iii) — computar via I250 puro.** Somar `vl_deb_cred`
+   onde `ind_dc='D'` em `ecd_i250` filtrado por `cod_cta`,
+   excluindo lançamentos cuja contrapartida é conta de
+   apuração/resultado. Mais robusto, mais caro em I/O.
+
+### Referência cruzada
+
+- Validação empírica contra Norte Geradores 2021 em 2026-04-29
+- src/gui/controllers/contabil_controller.py — método `_total_debito_anual`
+- tests/gui/controllers/test_contabil_controller.py —
+  test_apuracao_trimestral_contabiliza_despesa_bruta
