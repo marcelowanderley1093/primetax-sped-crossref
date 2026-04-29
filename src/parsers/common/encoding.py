@@ -9,6 +9,7 @@ Implementa a estratégia canônica descrita em CLAUDE.md §7.2.1:
 """
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -69,7 +70,12 @@ def _detectar_automatico(caminho: Path, prompt_operador: bool) -> ResultadoEncod
         pass
 
     # Passo 2: fallback Latin1 (nunca gera exceção)
-    linhas = caminho.read_text(encoding="latin1", errors="strict").splitlines()
+    # Truncamento em |9999| (Passo 0) descarta blob da assinatura PVA antes
+    # das Verificações A/B/C — sem isso, mojibake do PKCS#7 dispara
+    # falso-positivo na Verificação C.
+    conteudo = caminho.read_text(encoding="latin1", errors="strict")
+    conteudo = _truncar_em_9999(conteudo)
+    linhas = conteudo.splitlines()
 
     # Passo 3: validação semântica
     ok_a, msg_a = _verificar_cnpj(linhas)
@@ -99,11 +105,13 @@ def _detectar_automatico(caminho: Path, prompt_operador: bool) -> ResultadoEncod
 def _aplicar_override(caminho: Path, encoding: str) -> ResultadoEncoding:
     codec = "utf-8" if encoding == "utf8" else "latin1"
     try:
-        linhas = caminho.read_text(encoding=codec, errors="strict").splitlines()
+        conteudo = caminho.read_text(encoding=codec, errors="strict")
     except UnicodeDecodeError as exc:
         raise ValueError(
             f"Override --encoding {encoding} falhou no arquivo {caminho.name}: {exc}"
         ) from exc
+    conteudo = _truncar_em_9999(conteudo)
+    linhas = conteudo.splitlines()
 
     ok_a, msg_a = _verificar_cnpj(linhas)
     ok_b, msg_b = _verificar_tokens_estruturais(linhas)
@@ -117,6 +125,43 @@ def _aplicar_override(caminho: Path, encoding: str) -> ResultadoEncoding:
     _, msg_c = _verificar_ausencia_mojibake(linhas)
     confianca = "validado" if not msg_c else "suspeito"
     return ResultadoEncoding(encoding, confianca, f"Override explícito {encoding!r}")
+
+
+# ---------------------------------------------------------------------------
+# Truncamento em |9999| (Passo 0 da CLAUDE.md §7.2.1)
+# ---------------------------------------------------------------------------
+
+
+_RE_LINHA_9999 = re.compile(r"^\|9999\|\d+\|", re.MULTILINE)
+"""Linha do registro 9999: |9999|QTD_LIN|. QTD_LIN é numérica obrigatória."""
+
+
+def _truncar_em_9999(conteudo: str) -> str:
+    """Trunca o conteúdo logo após a linha do registro 9999.
+
+    Arquivos transmitidos pelo PVA da RFB têm assinatura digital PKCS#7
+    (CMS SignedData, OID 1.2.840.113549.1.7.2) anexada após o registro
+    9999, marcada pelo prefixo `SBRCAAEPDR`. Esse blob é binário e bytes
+    arbitrários decodificados como Latin1 podem formar strings que começam
+    com '|' — o que enganaria as Verificações B e C.
+
+    A linha 9999 é o último registro estrutural do SPED por definição
+    (IN RFB 1.252/2012, Manual EFD-Contribuições). Tudo após o newline
+    que segue o |9999|N| é descartado para validação de encoding.
+
+    Se o arquivo não tem |9999|, retorna o conteúdo intocado — cabe às
+    verificações reportar o problema apropriadamente.
+    """
+    m = _RE_LINHA_9999.search(conteudo)
+    if m is None:
+        return conteudo
+    fim = m.end()
+    # Inclui o terminador de linha (\r\n, \n ou EOF).
+    if fim < len(conteudo) and conteudo[fim] == "\r":
+        fim += 1
+    if fim < len(conteudo) and conteudo[fim] == "\n":
+        fim += 1
+    return conteudo[:fim]
 
 
 def _verificar_cnpj(linhas: list[str]) -> tuple[bool, str]:
