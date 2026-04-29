@@ -34,7 +34,7 @@ from src.parsers.blocos.bloco_m_ecf import (
 from src.parsers.blocos.bloco_9_ecf import parsear_9100
 from src.parsers.blocos.bloco_x_ecf import parsear_x460, parsear_x480
 from src.parsers.blocos.bloco_y_ecf import parsear_y570
-from src.parsers.common.encoding import detectar_encoding
+from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,7 @@ def importar(
     )
     codec = "utf-8" if res_enc.encoding == "utf8" else "latin-1"
     texto = caminho.read_text(encoding=codec, errors="strict")
+    texto = truncar_em_9999(texto)
     linhas_raw = texto.splitlines()
     total_linhas = len(linhas_raw)
 

@@ -34,7 +34,7 @@ from src.parsers.blocos.bloco_j_ecd import (
     parsear_j100,
     parsear_j150,
 )
-from src.parsers.common.encoding import detectar_encoding
+from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,7 @@ def importar(
     )
     codec = "utf-8" if res_enc.encoding == "utf8" else "latin-1"
     texto = caminho.read_text(encoding=codec, errors="strict")
+    texto = truncar_em_9999(texto)
     linhas_raw = texto.splitlines()
     total_linhas = len(linhas_raw)
 

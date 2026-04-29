@@ -74,7 +74,7 @@ def _detectar_automatico(caminho: Path, prompt_operador: bool) -> ResultadoEncod
     # das Verificações A/B/C — sem isso, mojibake do PKCS#7 dispara
     # falso-positivo na Verificação C.
     conteudo = caminho.read_text(encoding="latin1", errors="strict")
-    conteudo = _truncar_em_9999(conteudo)
+    conteudo = truncar_em_9999(conteudo)
     linhas = conteudo.splitlines()
 
     # Passo 3: validação semântica
@@ -110,7 +110,7 @@ def _aplicar_override(caminho: Path, encoding: str) -> ResultadoEncoding:
         raise ValueError(
             f"Override --encoding {encoding} falhou no arquivo {caminho.name}: {exc}"
         ) from exc
-    conteudo = _truncar_em_9999(conteudo)
+    conteudo = truncar_em_9999(conteudo)
     linhas = conteudo.splitlines()
 
     ok_a, msg_a = _verificar_cnpj(linhas)
@@ -136,7 +136,7 @@ _RE_LINHA_9999 = re.compile(r"^\|9999\|\d+\|", re.MULTILINE)
 """Linha do registro 9999: |9999|QTD_LIN|. QTD_LIN é numérica obrigatória."""
 
 
-def _truncar_em_9999(conteudo: str) -> str:
+def truncar_em_9999(conteudo: str) -> str:
     """Trunca o conteúdo logo após a linha do registro 9999.
 
     Arquivos transmitidos pelo PVA da RFB têm assinatura digital PKCS#7
