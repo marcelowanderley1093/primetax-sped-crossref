@@ -11,7 +11,7 @@ referenciam esses débitos.
 
 ## BUG-001 — Validação de Bloco 9 hard-coded vazia em 3 parsers
 
-**Status:** aberto
+**Status:** resolvido em `0141560` (2026-04-30)
 **Severidade:** média
 **Descoberto em:** 2026-04-29, durante validação contra Norte
 Geradores. Registrado também em commit 73811d5
@@ -50,12 +50,63 @@ EFD-Contribuições (efd_contribuicoes.py:421-432):
 Considerar também extrair lógica para função compartilhada em
 `src/parsers/common/` (similar a `truncar_em_9999`).
 
+### Resolução (commits 84f830b + 0141560, 2026-04-30)
+
+(a) **Função compartilhada criada.** Lógica de validação extraída
+para `src/parsers/common/bloco9.py` em `validar_bloco9()` —
+função pura que recebe `contagens_reais`, `regs_9900`, `reg9999`
+e `total_linhas_sped` e retorna `(contagens_declaradas,
+divergencias)`. Padrão simétrico ao `truncar_em_9999()` introduzido
+em commit 73811d5.
+
+(b) **3 parsers atualizados em paridade com EFD-Contribuições.**
+ECD, EFD ICMS/IPI e ECF agora:
+- acumulam `contagens_reais` cumulativo por `reg_tipo` no loop;
+- parseiam registros 9900 e 9999 (via `parsear_9900`/`parsear_9999`
+  já existentes em `bloco_9.py`);
+- chamam `validar_bloco9()` antes do retorno;
+- derivam `status='ok'` ou `'parcial'` conforme presença de erros
+  ou divergências.
+
+(c) **Achado adicional durante validação empírica — caso J801.**
+Re-importação dos 4 ECDs anuais da Norte Geradores expôs
+divergência sistemática de 704 linhas no ECD 2023 (substituidora
+final 2CFE6DA9). Investigação revelou que `9999.QTD_LIN` do PVA
+conta apenas **linhas SPED válidas** (com pipe inicial), enquanto
+o cálculo herdado usava `len(linhas_raw)` (linhas físicas após
+`truncar_em_9999`). A diferença vem do registro **J801 (Termo de
+Encerramento)** que embute conteúdo RTF em Base64 multilinhas —
+as continuações Base64 não começam com pipe e não são contadas
+pelo PVA. Funcionava em EFD-Contribuições porque ela não tem
+J801; quebraria em qualquer ECD anual com encerramento contábil.
+
+**Correção:** introduzido `total_linhas_sped =
+sum(1 for l in linhas_raw if l.startswith("|"))` calculado em
+cada parser e passado como argumento a `validar_bloco9`. O campo
+público `total_linhas_lidas` no `ResultadoImportacao` continua
+sendo linhas físicas (preservado para diagnóstico de
+encoding/truncamento); a contagem semântica do PVA é interna ao
+validador. Teste regressivo
+`test_arquivo_com_continuacoes_base64` em `test_bloco9.py`
+documenta o cenário.
+
+(d) **Validação final.** 4 ECDs anuais da NG (2021-2024) em
+diretório isolado: todos `status='ok'` confirmado. ECD 2023
+antes geraria falso positivo sob Bug-001 fix sem a correção
+`total_linhas_sped`; agora valida limpo. pytest -x: **440 passed**
+(439 anteriores + 1 novo teste J801).
+
 ### Referência cruzada
 
 - Commit 73811d5 — refactor que aplicou truncamento mas não
   endereçou validação de Bloco 9
-- src/parsers/efd_contribuicoes.py:421-432 — implementação de
-  referência
+- Commit 84f830b — função compartilhada `validar_bloco9()` criada
+  e EFD-Contribuições refatorada para usá-la
+- Commit 0141560 — fix aplicado nos 3 parsers + correção
+  `total_linhas_sped` (caso J801)
+- src/parsers/common/bloco9.py — implementação canônica
+- src/parsers/efd_contribuicoes.py:421-432 — implementação
+  original (antes da extração)
 
 ---
 
