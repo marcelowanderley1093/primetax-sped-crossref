@@ -18,9 +18,11 @@ from pathlib import Path
 from src.crossref.common.disponibilidade_sped import atualizar_disponibilidade
 from src.db.repo import Repositorio
 from src.models.registros import ResultadoImportacao
+from src.parsers.blocos.bloco_9 import parsear_9900, parsear_9999
 from src.parsers.blocos.bloco_c_icms import parsear_c100_icms, parsear_c170_icms
 from src.parsers.blocos.bloco_g_icms import parsear_g110, parsear_g125
 from src.parsers.blocos.bloco_h_icms import parsear_h005, parsear_h010
+from src.parsers.common.bloco9 import validar_bloco9
 from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,10 @@ def importar(
     regs_g125: list = []
     regs_h005: list = []
     regs_h010: list = []
+    regs_9900: list = []
+    reg9999 = None
+
+    contagens_reais: dict[str, int] = {}
 
     for num_linha, linha_raw in enumerate(linhas_raw, start=1):
         linha = linha_raw.strip()
@@ -110,6 +116,7 @@ def importar(
             continue
 
         reg_tipo = campos[1].strip().upper()
+        contagens_reais[reg_tipo] = contagens_reais.get(reg_tipo, 0) + 1
 
         if reg_tipo not in _TIPOS_RELEVANTES:
             continue
@@ -183,6 +190,12 @@ def importar(
                 r = parsear_h010(campos, num_linha, arquivo_str, h005_atual)
                 regs_h010.append(r)
 
+            elif reg_tipo == "9900" and ctx:
+                regs_9900.append(parsear_9900(campos, num_linha, arquivo_str))
+
+            elif reg_tipo == "9999":
+                reg9999 = parsear_9999(campos, num_linha, arquivo_str)
+
         except Exception as exc:
             msg = f"Erro ao parsear linha {num_linha} ({reg_tipo}): {exc}"
             logger.error(msg)
@@ -200,7 +213,7 @@ def importar(
             encoding_origem=res_enc.encoding,
             encoding_confianca=res_enc.confianca,
             total_linhas_lidas=total_linhas,
-            contagens_reais={},
+            contagens_reais=contagens_reais,
             contagens_declaradas={},
             divergencias_bloco9=["Registro 0000 ausente — EFD ICMS/IPI rejeitado"],
             sucesso=False,
@@ -211,6 +224,20 @@ def importar(
     ano_cal = ctx["ano_calendario"]
     ano_mes = ctx["ano_mes"]
     arquivo_hash = _sha256(caminho)
+
+    # --- Validação Bloco 9 (cruzamento 01) ---
+    # 9999.QTD_LIN do PVA conta apenas linhas SPED válidas (com pipe
+    # inicial). Mantida semântica do PVA por simetria com os demais
+    # parsers — embora EFD ICMS/IPI não tenha registros multilinhas
+    # como o J801 da ECD.
+    total_linhas_sped = sum(1 for l in linhas_raw if l.startswith("|"))
+    contagens_declaradas, divergencias_bloco9 = validar_bloco9(
+        contagens_reais, regs_9900, reg9999, total_linhas_sped,
+    )
+    tem_erro = bool(erros_parse)
+    tem_div_bloco9 = bool(divergencias_bloco9)
+    sucesso = not tem_erro and not tem_div_bloco9
+    status = "ok" if sucesso else "parcial"
 
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
@@ -229,7 +256,7 @@ def importar(
                 cod_ver=ctx["cod_ver"],
                 encoding_origem=res_enc.encoding,
                 encoding_confianca=res_enc.confianca,
-                status="ok",
+                status=status,
             )
             repo.inserir_icms_0000(conn, reg0000, ctx)
             for r in regs_c100:
@@ -265,13 +292,9 @@ def importar(
         encoding_origem=res_enc.encoding,
         encoding_confianca=res_enc.confianca,
         total_linhas_lidas=total_linhas,
-        contagens_reais={
-            "C170": len(regs_c170),
-            "G125": len(regs_g125),
-            "H010": len(regs_h010),
-        },
-        contagens_declaradas={},
-        divergencias_bloco9=[],
-        sucesso=True,
+        contagens_reais=contagens_reais,
+        contagens_declaradas=contagens_declaradas,
+        divergencias_bloco9=divergencias_bloco9,
+        sucesso=sucesso,
         mensagem=erros_parse[0] if erros_parse else "",
     )

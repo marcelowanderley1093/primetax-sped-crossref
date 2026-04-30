@@ -28,6 +28,21 @@ def fixture_bloco9_divergencia() -> Path:
 
 
 @pytest.fixture()
+def fixture_ecd_bloco9_divergencia() -> Path:
+    return FIXTURES_DIR / "ecd_bloco9_divergencia.txt"
+
+
+@pytest.fixture()
+def fixture_efd_icms_bloco9_divergencia() -> Path:
+    return FIXTURES_DIR / "efd_icms_bloco9_divergencia.txt"
+
+
+@pytest.fixture()
+def fixture_ecf_bloco9_divergencia() -> Path:
+    return FIXTURES_DIR / "ecf_bloco9_divergencia.txt"
+
+
+@pytest.fixture()
 def fixture_apro_rateio() -> Path:
     return FIXTURES_DIR / "efd_contrib_apro_rateio.txt"
 

@@ -31,9 +31,11 @@ from src.parsers.blocos.bloco_m_ecf import (
     parsear_m362,
     parsear_m500,
 )
+from src.parsers.blocos.bloco_9 import parsear_9900, parsear_9999
 from src.parsers.blocos.bloco_9_ecf import parsear_9100
 from src.parsers.blocos.bloco_x_ecf import parsear_x460, parsear_x480
 from src.parsers.blocos.bloco_y_ecf import parsear_y570
+from src.parsers.common.bloco9 import validar_bloco9
 from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,10 @@ def importar(
     regs_x480: list = []
     regs_y570: list = []
     regs_9100: list = []
+    regs_9900: list = []
+    reg9999 = None
+
+    contagens_reais: dict[str, int] = {}
 
     for num_linha, linha_raw in enumerate(linhas_raw, start=1):
         linha = linha_raw.strip()
@@ -128,6 +134,7 @@ def importar(
             continue
 
         reg_tipo = campos[1].strip().upper()
+        contagens_reais[reg_tipo] = contagens_reais.get(reg_tipo, 0) + 1
 
         if reg_tipo not in _TIPOS_RELEVANTES:
             continue
@@ -234,6 +241,12 @@ def importar(
             elif reg_tipo == "9100" and ctx:
                 regs_9100.append(parsear_9100(campos, num_linha, arquivo_str))
 
+            elif reg_tipo == "9900" and ctx:
+                regs_9900.append(parsear_9900(campos, num_linha, arquivo_str))
+
+            elif reg_tipo == "9999":
+                reg9999 = parsear_9999(campos, num_linha, arquivo_str)
+
         except Exception as exc:
             msg = f"Erro ao parsear linha {num_linha} ({reg_tipo}): {exc}"
             logger.error(msg)
@@ -251,7 +264,7 @@ def importar(
             encoding_origem=res_enc.encoding,
             encoding_confianca=res_enc.confianca,
             total_linhas_lidas=total_linhas,
-            contagens_reais={},
+            contagens_reais=contagens_reais,
             contagens_declaradas={},
             divergencias_bloco9=["Registro 0000 ausente — ECF rejeitada"],
             sucesso=False,
@@ -261,6 +274,19 @@ def importar(
     cnpj = ctx["cnpj_declarante"]
     ano_cal = ctx["ano_calendario"]
     arquivo_hash = _sha256(caminho)
+
+    # --- Validação Bloco 9 (cruzamento 01) ---
+    # 9999.QTD_LIN do PVA conta apenas linhas SPED válidas (com pipe
+    # inicial). Mantida semântica do PVA por simetria com os demais
+    # parsers.
+    total_linhas_sped = sum(1 for l in linhas_raw if l.startswith("|"))
+    contagens_declaradas, divergencias_bloco9 = validar_bloco9(
+        contagens_reais, regs_9900, reg9999, total_linhas_sped,
+    )
+    tem_erro = bool(erros_parse)
+    tem_div_bloco9 = bool(divergencias_bloco9)
+    sucesso = not tem_erro and not tem_div_bloco9
+    status = "ok" if sucesso else "parcial"
 
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
@@ -279,7 +305,7 @@ def importar(
                 cod_ver=ctx["cod_ver"],
                 encoding_origem=res_enc.encoding,
                 encoding_confianca=res_enc.confianca,
-                status="ok",
+                status=status,
             )
             repo.inserir_ecf_0000(conn, reg0000, ctx)
             if reg0010:
@@ -343,19 +369,9 @@ def importar(
         encoding_origem=res_enc.encoding,
         encoding_confianca=res_enc.confianca,
         total_linhas_lidas=total_linhas,
-        contagens_reais={
-            "K155": len(regs_k155),
-            "K355": len(regs_k355),
-            "M300": len(regs_m300),
-            "M312": len(regs_m312),
-            "M350": len(regs_m350),
-            "M362": len(regs_m362),
-            "M500": len(regs_m500),
-            "X480": len(regs_x480),
-            "Y570": len(regs_y570),
-        },
-        contagens_declaradas={},
-        divergencias_bloco9=[],
-        sucesso=True,
+        contagens_reais=contagens_reais,
+        contagens_declaradas=contagens_declaradas,
+        divergencias_bloco9=divergencias_bloco9,
+        sucesso=sucesso,
         mensagem=erros_parse[0] if erros_parse else "",
     )

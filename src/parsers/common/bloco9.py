@@ -17,17 +17,22 @@ def validar_bloco9(
     contagens_reais: dict[str, int],
     regs_9900: list[Reg9900],
     reg9999: Reg9999 | None,
-    total_linhas: int,
+    total_linhas_sped: int,
 ) -> tuple[dict[str, int], list[str]]:
     """Cruza contagens declaradas no Bloco 9 com contagens reais parseadas.
 
     Args:
         contagens_reais: dict[reg_tipo, qtd] acumulado durante o parsing
-            (uma entrada por linha lida — chave é o registro do campo [1]).
+            (uma entrada por linha SPED válida — chave é o registro do
+            campo [1]).
         regs_9900: lista de registros 9900 parseados (1 por reg_blc declarado).
         reg9999: registro 9999 parseado (ou None se ausente).
-        total_linhas: total de linhas físicas lidas do arquivo (após
-            truncar_em_9999).
+        total_linhas_sped: contagem de linhas que começam com `|` (linhas
+            SPED válidas), pois 9999.QTD_LIN do PVA conta apenas estas.
+            Linhas físicas que não começam com `|` (ex.: continuação
+            Base64 do conteúdo RTF embutido em J801 — Termo de
+            Encerramento de ECD) NÃO são contabilizadas. Caller deve
+            calcular como `sum(1 for l in linhas_raw if l.startswith("|"))`.
 
     Returns:
         (contagens_declaradas, divergencias)
@@ -48,9 +53,9 @@ def validar_bloco9(
                 f"{reg_dec}: declarado={qtd_dec} real={qtd_real}"
             )
 
-    if reg9999 and reg9999.qtd_lin != total_linhas:
+    if reg9999 and reg9999.qtd_lin != total_linhas_sped:
         divergencias.append(
-            f"9999.QTD_LIN={reg9999.qtd_lin} ≠ linhas lidas={total_linhas}"
+            f"9999.QTD_LIN={reg9999.qtd_lin} ≠ linhas lidas={total_linhas_sped}"
         )
 
     return contagens_declaradas, divergencias

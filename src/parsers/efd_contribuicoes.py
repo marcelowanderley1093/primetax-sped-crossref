@@ -417,8 +417,13 @@ def importar(
         )
 
     # --- Validação Bloco 9 (cruzamento 01) ---
+    # 9999.QTD_LIN do PVA conta apenas linhas SPED válidas (com pipe
+    # inicial). Em arquivos com J801 (Termo de Encerramento ECD) o
+    # conteúdo RTF é embutido em Base64 multilinhas — continuações sem
+    # pipe NÃO são contadas pelo PVA. Aqui usamos a mesma semântica.
+    total_linhas_sped = sum(1 for l in linhas_raw if l.startswith("|"))
     contagens_declaradas, divergencias_bloco9 = validar_bloco9(
-        contagens_reais, regs_9900, reg9999, total_linhas,
+        contagens_reais, regs_9900, reg9999, total_linhas_sped,
     )
 
     # --- Persistência ---

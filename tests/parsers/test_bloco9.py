@@ -34,7 +34,7 @@ class TestValidarBloco9:
         ]
         reg9999 = _r9999(11)  # 5 dados + 5 9900 + 1 9999 = 11
         contagens_declaradas, divergencias = validar_bloco9(
-            contagens_reais, regs_9900, reg9999, total_linhas=11,
+            contagens_reais, regs_9900, reg9999, total_linhas_sped=11,
         )
         assert divergencias == []
         assert contagens_declaradas == {
@@ -47,7 +47,7 @@ class TestValidarBloco9:
         regs_9900 = [_r9900("0000", 1), _r9900("M600", 99)]
         reg9999 = None
         _, divergencias = validar_bloco9(
-            contagens_reais, regs_9900, reg9999, total_linhas=10,
+            contagens_reais, regs_9900, reg9999, total_linhas_sped=10,
         )
         assert len(divergencias) == 1
         assert "M600" in divergencias[0]
@@ -60,7 +60,7 @@ class TestValidarBloco9:
         regs_9900 = [_r9900("0000", 1)]
         reg9999 = _r9999(50)
         _, divergencias = validar_bloco9(
-            contagens_reais, regs_9900, reg9999, total_linhas=11,
+            contagens_reais, regs_9900, reg9999, total_linhas_sped=11,
         )
         assert len(divergencias) == 1
         assert "9999.QTD_LIN=50" in divergencias[0]
@@ -74,7 +74,7 @@ class TestValidarBloco9:
         regs_9900 = [_r9900("0000", 1), _r9900("C100", 5)]
         reg9999 = None
         _, divergencias = validar_bloco9(
-            contagens_reais, regs_9900, reg9999, total_linhas=10,
+            contagens_reais, regs_9900, reg9999, total_linhas_sped=10,
         )
         assert divergencias == []
 
@@ -84,9 +84,34 @@ class TestValidarBloco9:
         regs_9900 = [_r9900("0000", 1), _r9900("M200", 10)]
         reg9999 = _r9999(99)
         _, divergencias = validar_bloco9(
-            contagens_reais, regs_9900, reg9999, total_linhas=20,
+            contagens_reais, regs_9900, reg9999, total_linhas_sped=20,
         )
         assert len(divergencias) == 2
         # Uma de M200, uma de 9999
         assert any("M200" in d for d in divergencias)
         assert any("9999.QTD_LIN" in d for d in divergencias)
+
+    def test_arquivo_com_continuacoes_base64(self) -> None:
+        """Caso J801: arquivo com Termo de Encerramento RTF embute conteúdo
+        Base64 multilinhas no campo TXT_TERMO. Linhas físicas (8) > linhas
+        SPED válidas (5) por design — PVA conta apenas linhas com pipe em
+        9999.QTD_LIN. validar_bloco9 deve receber total_linhas_sped (5),
+        não total_linhas físicas (8). Caller é responsável por contar
+        linhas que começam com `|` antes de chamar.
+
+        Cenário concreto baseado em ECD 2023 da Norte Geradores
+        (substituidora 2CFE6DA9): 93.858 linhas SPED + 704 continuações
+        Base64 = 94.562 físicas; 9999.QTD_LIN=93858 bate com SPED válidas.
+        """
+        contagens_reais = {"0000": 1, "I010": 1, "J801": 1, "9900": 1, "9999": 1}
+        regs_9900 = [
+            _r9900("0000", 1), _r9900("I010", 1), _r9900("J801", 1),
+            _r9900("9900", 1), _r9900("9999", 1),
+        ]
+        # PVA declara 5 (linhas SPED, ignora continuação Base64)
+        reg9999 = _r9999(5)
+        # Caller passa total_linhas_sped=5 (não 8 físicas)
+        _, divergencias = validar_bloco9(
+            contagens_reais, regs_9900, reg9999, total_linhas_sped=5,
+        )
+        assert divergencias == []
