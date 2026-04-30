@@ -25,6 +25,7 @@ from src.parsers.blocos.bloco_m import (
     parsear_m100, parsear_m105, parsear_m200, parsear_m210, parsear_m215,
     parsear_m500, parsear_m505, parsear_m600, parsear_m610, parsear_m615,
 )
+from src.parsers.common.bloco9 import validar_bloco9
 from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
@@ -416,22 +417,9 @@ def importar(
         )
 
     # --- Validação Bloco 9 (cruzamento 01) ---
-    contagens_declaradas: dict[str, int] = {r.reg_blc: r.qtd_reg_blc for r in regs_9900}
-    divergencias_bloco9: list[str] = []
-
-    for reg_dec, qtd_dec in contagens_declaradas.items():
-        qtd_real = contagens_reais.get(reg_dec, 0)
-        if qtd_real != qtd_dec:
-            divergencias_bloco9.append(
-                f"{reg_dec}: declarado={qtd_dec} real={qtd_real}"
-            )
-
-    if reg9999:
-        # 9999.QTD_LIN inclui a própria linha 9999
-        if reg9999.qtd_lin != total_linhas:
-            divergencias_bloco9.append(
-                f"9999.QTD_LIN={reg9999.qtd_lin} ≠ linhas lidas={total_linhas}"
-            )
+    contagens_declaradas, divergencias_bloco9 = validar_bloco9(
+        contagens_reais, regs_9900, reg9999, total_linhas,
+    )
 
     # --- Persistência ---
     cnpj = ctx["cnpj_declarante"]
