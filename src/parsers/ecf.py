@@ -80,6 +80,7 @@ def importar(
     encoding_override: str = "auto",
     prompt_operador: bool = True,
     base_dir_db: Path | None = None,
+    force_reimport: bool = False,
 ) -> ResultadoImportacao:
     """
     Importa um arquivo ECF para o banco SQLite longitudinal.
@@ -89,6 +90,10 @@ def importar(
               ecf_x480, ecf_y570.
     Atualiza: disponibilidade_ecf → 'importada'.
     Se TIP_ESC_PRE='L': disponibilidade_ecd → 'estruturalmente_ausente'.
+
+    Bug-002 Opção 3: se `force_reimport=False` e mesmo arquivo já existe
+    em _importacoes para (ecf × cnpj × ano_calendario), aborta com
+    sucesso=False sem reimportar.
     """
     arquivo_str = str(caminho.resolve())
 
@@ -290,6 +295,36 @@ def importar(
 
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
+
+    # Bug-002 (Opção 3) — protege contra reimport acidental.
+    if not force_reimport:
+        conn_check = repo.conexao()
+        try:
+            existente = repo.existe_import_com_hash(
+                conn_check, sped_tipo="ecf",
+                cnpj=cnpj, periodo=ano_cal,
+                arquivo_hash=arquivo_hash,
+            )
+        finally:
+            conn_check.close()
+        if existente:
+            msg = (
+                f"Arquivo ja importado em {existente['importado_em']} "
+                f"(id={existente['id']}). Use --force-reimport para reimportar."
+            )
+            logger.warning(msg)
+            return ResultadoImportacao(
+                arquivo=arquivo_str, cnpj=cnpj, ano_calendario=ano_cal,
+                ano_mes=ctx["ano_mes"], dt_ini=ctx["dt_ini_periodo"],
+                dt_fin=ctx["dt_fin_periodo"], cod_ver=ctx["cod_ver"],
+                encoding_origem=res_enc.encoding,
+                encoding_confianca=res_enc.confianca,
+                total_linhas_lidas=total_linhas,
+                contagens_reais=contagens_reais,
+                contagens_declaradas=contagens_declaradas,
+                divergencias_bloco9=divergencias_bloco9,
+                sucesso=False, mensagem=msg,
+            )
 
     conn = repo.conexao()
     try:

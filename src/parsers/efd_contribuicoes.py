@@ -83,6 +83,7 @@ def importar(
     encoding_override: str = "auto",
     prompt_operador: bool = True,
     base_dir_db: Path | None = None,
+    force_reimport: bool = False,
 ) -> ResultadoImportacao:
     """
     Importa um arquivo EFD-Contribuições para o banco SQLite.
@@ -92,6 +93,12 @@ def importar(
         encoding_override: "auto", "utf8" ou "latin1".
         prompt_operador: Pede confirmação ao operador em caso de encoding suspeito.
         base_dir_db: Diretório base para data/db (útil em testes).
+        force_reimport: Se False (default), aborta com sucesso=False quando
+            já existe import com mesmo arquivo_hash em _importacoes para
+            o (sped_tipo × cnpj × ano_mes). Bug-002 Opção 3 — protege
+            contra reimport acidental. Para retificadora real (hash
+            diferente), passa naturalmente; Opção 2 (DELETE prévio) trata
+            a substituição.
 
     Returns:
         ResultadoImportacao com contagens, encoding detectado e status.
@@ -433,6 +440,38 @@ def importar(
 
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
+
+    # Bug-002 (Opção 3) — protege contra reimport acidental do mesmo
+    # arquivo (mesmo hash). Retificadora real (hash diferente) passa
+    # direto e é substituída pela Opção 2 (DELETE prévio abaixo).
+    if not force_reimport:
+        conn_check = repo.conexao()
+        try:
+            existente = repo.existe_import_com_hash(
+                conn_check, sped_tipo="efd_contribuicoes",
+                cnpj=cnpj, periodo=ctx["ano_mes"],
+                arquivo_hash=arquivo_hash,
+            )
+        finally:
+            conn_check.close()
+        if existente:
+            msg = (
+                f"Arquivo ja importado em {existente['importado_em']} "
+                f"(id={existente['id']}). Use --force-reimport para reimportar."
+            )
+            logger.warning(msg)
+            return ResultadoImportacao(
+                arquivo=arquivo_str, cnpj=cnpj, ano_calendario=ano_cal,
+                ano_mes=ctx["ano_mes"], dt_ini=ctx["dt_ini_periodo"],
+                dt_fin=ctx["dt_fin_periodo"], cod_ver=ctx["cod_ver"],
+                encoding_origem=res_enc.encoding,
+                encoding_confianca=res_enc.confianca,
+                total_linhas_lidas=total_linhas,
+                contagens_reais=contagens_reais,
+                contagens_declaradas=contagens_declaradas,
+                divergencias_bloco9=divergencias_bloco9,
+                sucesso=False, mensagem=msg,
+            )
 
     tem_erro = bool(erros_parse)
     tem_div_bloco9 = bool(divergencias_bloco9)

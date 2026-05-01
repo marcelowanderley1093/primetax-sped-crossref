@@ -144,6 +144,7 @@ def cmd_import(args: argparse.Namespace) -> int:
                 arq,
                 encoding_override=args.encoding,
                 prompt_operador=not args.nao_interativo,
+                force_reimport=args.force_reimport,
             )
         except ValueError as exc:
             logger.error("Importação rejeitada (%s): %s", arq.name, exc)
@@ -351,6 +352,15 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Não perguntar ao operador em encoding suspeito (modo batch)",
+    )
+    p_import.add_argument(
+        "--force-reimport",
+        action="store_true",
+        default=False,
+        help=(
+            "Reimporta arquivo já presente em _importacoes (mesmo hash). "
+            "Sem a flag, reimport idêntico aborta com aviso (Bug-002 Opção 3)."
+        ),
     )
 
     # --- diagnose ---
