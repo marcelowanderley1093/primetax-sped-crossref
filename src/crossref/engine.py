@@ -219,6 +219,25 @@ class Motor:
                     meses[0],
                 )
 
+            # Bug-005 — DELETE prévio em re-diagnóstico. Cada chamada de
+            # diagnosticar_ano gera um snapshot fresh; rows anteriores
+            # (incluindo anotações de auditor revisado_em/nota) são
+            # apagadas. Limitação consciente — ver
+            # docs/debitos-conhecidos.md entrada Bug-005.
+            with conn:
+                qtd_op_apagadas, qtd_div_apagadas = (
+                    self.repo.deletar_diagnostico_anterior(
+                        conn, cnpj, ano_calendario,
+                    )
+                )
+            if qtd_op_apagadas + qtd_div_apagadas > 0:
+                logger.info(
+                    "Re-diagnóstico para CNPJ=%s AC=%d: %d oportunidades + "
+                    "%d divergências antigas removidas (Bug-005 fix; "
+                    "anotações prévias também perdidas)",
+                    cnpj, ano_calendario, qtd_op_apagadas, qtd_div_apagadas,
+                )
+
             resultado_por_mes = []
             for ano_mes in meses:
                 divs_c1 = self.executar_camada1(conn, cnpj, ano_mes, ano_calendario)
