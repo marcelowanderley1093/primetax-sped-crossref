@@ -294,6 +294,19 @@ def importar(
     conn = repo.conexao()
     try:
         with conn:
+            # Bug-002 (Opção 2) — DELETE prévio em todas as tabelas ECF
+            # filhas para o (cnpj × ano_calendario), garantindo dedup em
+            # reimport idêntico ou retificadora.
+            deletadas = repo.deletar_dados_anteriores(
+                conn, sped_tipo="ecf",
+                cnpj=cnpj, ano_calendario=ano_cal,
+            )
+            if deletadas > 0:
+                logger.info(
+                    "Reimport detectado para ecf %s/%s: "
+                    "%d rows antigas removidas (Bug-002 fix)",
+                    cnpj, ano_cal, deletadas,
+                )
             repo.registrar_importacao(
                 conn,
                 sped_tipo="ecf",

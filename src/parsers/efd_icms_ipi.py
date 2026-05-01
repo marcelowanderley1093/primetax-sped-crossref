@@ -245,6 +245,19 @@ def importar(
     conn = repo.conexao()
     try:
         with conn:
+            # Bug-002 (Opção 2) — DELETE prévio em todas as tabelas
+            # EFD ICMS/IPI filhas para o (cnpj × ano_mes), garantindo
+            # dedup em reimport idêntico ou retificadora.
+            deletadas = repo.deletar_dados_anteriores(
+                conn, sped_tipo="efd_icms",
+                cnpj=cnpj, ano_mes=ano_mes,
+            )
+            if deletadas > 0:
+                logger.info(
+                    "Reimport detectado para efd_icms %s/%s: "
+                    "%d rows antigas removidas (Bug-002 fix)",
+                    cnpj, ano_mes, deletadas,
+                )
             repo.registrar_importacao(
                 conn,
                 sped_tipo="efd_icms",

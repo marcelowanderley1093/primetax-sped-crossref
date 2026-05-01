@@ -441,6 +441,19 @@ def importar(
     conn = repo.conexao()
     try:
         with conn:
+            # Bug-002 (Opção 2) — DELETE prévio: garante que reimport
+            # idêntico ou retificadora não duplique dados. _importacoes
+            # preserva histórico (T8 GUI mostra cronologia).
+            deletadas = repo.deletar_dados_anteriores(
+                conn, sped_tipo="efd_contribuicoes",
+                cnpj=cnpj, ano_mes=ctx["ano_mes"],
+            )
+            if deletadas > 0:
+                logger.info(
+                    "Reimport detectado para efd_contribuicoes %s/%s: "
+                    "%d rows antigas removidas (Bug-002 fix)",
+                    cnpj, ctx["ano_mes"], deletadas,
+                )
             repo.registrar_importacao(
                 conn,
                 sped_tipo="efd_contribuicoes",
