@@ -112,7 +112,7 @@ antes geraria falso positivo sob Bug-001 fix sem a correção
 
 ## BUG-002 — Ausência de dedup/upsert em reimport de SPED
 
-**Status:** aberto, mitigado por convenção operacional
+**Status:** resolvido em `af3b55f` + `c8d6379` (2026-05-01)
 **Severidade:** alta
 **Descoberto em:** 2026-04-29, durante validação contra Norte
 Geradores.
@@ -169,11 +169,70 @@ Três alternativas (decisão de design para sprint dedicada):
    já está em _importacoes para mesmo (cnpj, ano_mes), perguntar
    (ou decidir por flag --force-reimport) se substitui ou aborta.
 
+### Resolução (commits `fd2a63f` + `af3b55f` + `c8d6379`, 2026-05-01)
+
+Combinação de duas opções da seção "Solução proposta" original:
+
+**(a) Opção 2 (DELETE prévio) — núcleo do fix.** `Repositorio`
+ganha método `deletar_dados_anteriores(conn, sped_tipo, cnpj, *,
+ano_mes, ano_calendario)` que apaga todas as tabelas SPED filhas
+do tipo para o (cnpj × período) antes de inserir novas rows.
+Cada parser chama o método dentro de `with conn:` antes de
+`registrar_importacao` + `inserir_xxx`. Single source of truth
+em `_TABELAS_POR_SPED_TIPO` (mapa estático em `src/db/repo.py`).
+
+**(b) Opção 3 (`--force-reimport`) — camada UX complementar.**
+`Repositorio` ganha `existe_import_com_hash(conn, sped_tipo,
+cnpj, periodo, hash)`. Cada parser, antes do bloco transacional,
+verifica se hash já existe em `_importacoes` para o (sped_tipo ×
+cnpj × período). Se sim e `force_reimport=False` (default),
+retorna `ResultadoImportacao(sucesso=False, mensagem=...)` com
+mensagem clara. CLI ganha `--force-reimport` que passa
+`force_reimport=True` aos parsers. Protege contra acidente
+operacional (operador rodando 2x); retificadora real (hash
+diferente) passa naturalmente pela Opção 3 e é tratada pela
+Opção 2.
+
+**Tabelas preservadas:** `_importacoes` (mantém histórico de
+versões para T8 Auditoria GUI que usa `is_reimport=True` para
+identificar retificações), `_sped_contexto`,
+`reconciliacao_override`, `contabil_oportunidades_essencialidade`.
+
+**Atomicidade:** chamada de `deletar_dados_anteriores` está
+dentro do `with conn:` existente, junto aos INSERTs subsequentes.
+Em qualquer falha entre DELETE e INSERTs, transação rollback
+automático — sem perda de dados antigos.
+
+**Convenção `ano_mes` em `_importacoes`:** SPED mensal
+(efd_contribuicoes, efd_icms) grava `ano_mes=AAAAMM`; SPED anual
+(ecd, ecf) grava `ano_mes=AAAA01`. `existe_import_com_hash`
+mapeia `periodo=ano_calendario` → `ano_mes=AAAA*100+1`
+internamente para SPED anual, simplificando a query.
+
+### Validação empírica final
+
+Reimport de PISCOFINS jan/2024 NG sobre banco existente
+(`data/db/63876114000110/2024.sqlite`):
+- Sem `--force-reimport`: aborta com mensagem clara
+  ("Arquivo ja importado em 2026-04-29T18:57:59... id=1. Use
+  --force-reimport"). `_importacoes` inalterada.
+- Com `--force-reimport`: log "Reimport detectado: 79 rows
+  antigas removidas (Bug-002 fix)". Status final = `ok`.
+  Tabelas filhas: 1 row 0000, 10 F600, 1 M200 (sem duplicação).
+  `_importacoes`: 2 rows com mesmo hash (histórico preservado
+  para T8 GUI).
+
+pytest -x: 463 passed (440 → 463 com 23 testes regressivos novos
+em `tests/db/test_repo_dedup.py` e `tests/parsers/test_dedup_reimport.py`).
+
 ### Referência cruzada
 
-- Validação empírica em 2026-04-29 (sessão Norte Geradores)
+- Validação empírica em 2026-04-29 (descoberta) e 2026-05-01
+  (validação do fix) — sessões Norte Geradores
 - Tabela _importacoes: registro completo de imports históricos
-  já existe — base para Solução 3
+  já existe — base usada pela Opção 3
+- src/db/repo.py — `deletar_dados_anteriores`,
+  `existe_import_com_hash`, mapa `_TABELAS_POR_SPED_TIPO`
 
 ---
 
@@ -243,3 +302,86 @@ marginalmente. Soluções refinadas:
 - src/gui/controllers/contabil_controller.py — método `_total_debito_anual`
 - tests/gui/controllers/test_contabil_controller.py —
   test_apuracao_trimestral_contabiliza_despesa_bruta
+
+---
+
+## BUG-005 — Engine de cruzamentos duplica rows em re-execução
+
+**Status:** resolvido em `f96a45a` (2026-05-01) com limitação documentada
+**Severidade:** média (era alta latente; descoberto durante Sprint Hardening)
+**Descoberto em:** 2026-04-30, durante investigação Bug-002.
+
+### Sintoma observado
+
+Cada chamada de `Motor.diagnosticar_ano(ano_calendario)` insere
+novas rows em `crossref_oportunidades` e `crossref_divergencias`
+sem apagar as anteriores. Verificado empiricamente em 2026-04-30:
+**132 → 264 oportunidades** em 2 execuções consecutivas no banco
+da NG 2024 (cópia isolada para não tocar produção).
+
+### Causa raiz
+
+`src/crossref/engine.py:223-235` faz INSERT puro via
+`inserir_oportunidade` / `inserir_divergencia` por achado, sem
+DELETE prévio. Padrão estrutural idêntico ao Bug-002, escopo
+distinto (output de diagnóstico vs dados de import SPED).
+
+### Resolução (commit `f96a45a`, 2026-05-01)
+
+- `src/db/repo.py` (commit `fd2a63f` da mesma sprint): novo método
+  `deletar_diagnostico_anterior(conn, cnpj, ano_calendario)` apaga
+  rows de `crossref_oportunidades` + `crossref_divergencias` para
+  (cnpj × ano).
+- `src/crossref/engine.py`: `Motor.diagnosticar_ano` chama o método
+  ANTES do loop de inserts, dentro de `with conn:` (atômico).
+
+**Validação empírica:** após fix, sequência 132 → 132 (era 132 →
+264). Cópia isolada do banco NG 2024 preservada; produção não
+tocada.
+
+### Limitação documentada
+
+**Re-diagnóstico apaga anotações prévias** (`revisado_em`,
+`revisado_por`, `nota` em `crossref_*`). Decisão consciente
+baseada em verificação empírica:
+
+1. **Zero anotações em todos os bancos do projeto** na data da
+   resolução. Feature implementada (T4 Oportunidades GUI:
+   `marcar_revisada`, `salvar_nota` em `oportunidade_controller.py`)
+   mas não usada em produção real.
+2. Alternativas avaliadas como over-engineering para o cenário
+   atual:
+   - **Snapshot + restore por chave de negócio** (codigo_regra +
+     ano_mes + evidencia_json): complexidade alta, sem demanda
+     real.
+   - **Versionamento via FK em `_importacoes.id`** ou
+     `diagnostico_id`: propaga `import_id` em todas as queries do
+     sistema; mudança arquitetural maior.
+3. Mitigação UX prevista para sprint futura: mensagem de
+   confirmação na T4 Oportunidades GUI ao disparar re-diagnóstico
+   ("Esta ação apagará N anotações prévias. Continuar?").
+
+**Quando reabrir como Bug-005-bis** (gatilho explícito):
+aparecer 1+ banco em `data/db/*/*.sqlite` com
+`revisado_em IS NOT NULL OR (nota IS NOT NULL AND nota != '')`
+em `crossref_oportunidades` ou `crossref_divergencias`.
+Nesse momento, a feature está em uso real e o trade-off
+muda de "limitação aceitável" para "perda de trabalho".
+
+Teste regressivo `test_re_execucao_apaga_anotacoes_LIMITACAO`
+em `tests/crossref/test_dedup_diagnostico.py` documenta
+explicitamente o comportamento — sua presença é o gatilho de
+revisão se o fix for reformulado para preservar anotações.
+
+### Referência cruzada
+
+- Verificação empírica em 2026-04-30 (descoberta — execução
+  dupla do `Motor.diagnosticar_ano(2024)` sobre cópia isolada
+  do banco NG 2024 confirmou duplicação 132 → 264)
+- Verificação empírica em 2026-05-01 (validação do fix —
+  mesmo cenário pós-fix: 132 → 132)
+- src/crossref/engine.py:222-244 — bloco com DELETE prévio
+- src/db/repo.py — `deletar_diagnostico_anterior`
+- Discussão arquitetural relacionada em
+  `docs/historico/analise-ng-frente1-suspensa-2026-04-29.md`
+  (seção 9 — implicações para Adaptação T9)
