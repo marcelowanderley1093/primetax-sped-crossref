@@ -29,11 +29,13 @@ from src.parsers.blocos.bloco_i_ecd import (
     parsear_i200,
     parsear_i250,
 )
+from src.parsers.blocos.bloco_9 import parsear_9900, parsear_9999
 from src.parsers.blocos.bloco_j_ecd import (
     parsear_j005,
     parsear_j100,
     parsear_j150,
 )
+from src.parsers.common.bloco9 import validar_bloco9
 from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,7 @@ def importar(
     encoding_override: str = "auto",
     prompt_operador: bool = True,
     base_dir_db: Path | None = None,
+    force_reimport: bool = False,
 ) -> ResultadoImportacao:
     """
     Importa um arquivo ECD para o banco SQLite longitudinal.
@@ -89,6 +92,10 @@ def importar(
     Persiste: ecd_0000, ecd_i010, ecd_i050, ecd_i150, ecd_i155,
               ecd_i200, ecd_i250, ecd_j005, ecd_j100, ecd_j150.
     Atualiza: disponibilidade_ecd → 'importada'.
+
+    Bug-002 Opção 3: se `force_reimport=False` e arquivo (mesmo hash)
+    já existe em _importacoes para (ecd × cnpj × ano_calendario),
+    aborta com sucesso=False sem reimportar.
     """
     arquivo_str = str(caminho.resolve())
 
@@ -119,6 +126,10 @@ def importar(
     regs_j005: list = []
     regs_j100: list = []
     regs_j150: list = []
+    regs_9900: list = []
+    reg9999 = None
+
+    contagens_reais: dict[str, int] = {}
 
     for num_linha, linha_raw in enumerate(linhas_raw, start=1):
         linha = linha_raw.strip()
@@ -130,6 +141,7 @@ def importar(
             continue
 
         reg_tipo = campos[1].strip().upper()
+        contagens_reais[reg_tipo] = contagens_reais.get(reg_tipo, 0) + 1
 
         if reg_tipo not in _TIPOS_RELEVANTES:
             continue
@@ -253,6 +265,12 @@ def importar(
                 r = parsear_j150(campos, num_linha, arquivo_str, j005_atual)
                 regs_j150.append(r)
 
+            elif reg_tipo == "9900" and ctx:
+                regs_9900.append(parsear_9900(campos, num_linha, arquivo_str))
+
+            elif reg_tipo == "9999":
+                reg9999 = parsear_9999(campos, num_linha, arquivo_str)
+
         except Exception as exc:
             msg = f"Erro ao parsear linha {num_linha} ({reg_tipo}): {exc}"
             logger.error(msg)
@@ -270,7 +288,7 @@ def importar(
             encoding_origem=res_enc.encoding,
             encoding_confianca=res_enc.confianca,
             total_linhas_lidas=total_linhas,
-            contagens_reais={},
+            contagens_reais=contagens_reais,
             contagens_declaradas={},
             divergencias_bloco9=["Registro 0000 ausente — ECD rejeitada"],
             sucesso=False,
@@ -282,6 +300,20 @@ def importar(
     ano_mes_base = ctx["ano_mes"]
     arquivo_hash = _sha256(caminho)
 
+    # --- Validação Bloco 9 (cruzamento 01) ---
+    # 9999.QTD_LIN do PVA conta apenas linhas SPED válidas (com pipe
+    # inicial). Em ECD com J801 (Termo de Encerramento) o conteúdo RTF
+    # é embutido em Base64 multilinhas — continuações sem pipe NÃO são
+    # contadas pelo PVA.
+    total_linhas_sped = sum(1 for l in linhas_raw if l.startswith("|"))
+    contagens_declaradas, divergencias_bloco9 = validar_bloco9(
+        contagens_reais, regs_9900, reg9999, total_linhas_sped,
+    )
+    tem_erro = bool(erros_parse)
+    tem_div_bloco9 = bool(divergencias_bloco9)
+    sucesso = not tem_erro and not tem_div_bloco9
+    status = "ok" if sucesso else "parcial"
+
     # Classificação da reconciliação de plano de contas (§16.2) é feita após
     # os inserts, dentro da transação, via classificar_reconciliacao — que lê
     # IND_MUDANC_PC e cobertura real do Bloco C direto do banco.
@@ -289,9 +321,54 @@ def importar(
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
 
+    # Bug-002 (Opção 3) — protege contra reimport acidental. Para ECD
+    # (anual), periodo é ano_calendario; método mapeia para ano_mes=
+    # AAAA01 conforme convenção de _importacoes.
+    if not force_reimport:
+        conn_check = repo.conexao()
+        try:
+            existente = repo.existe_import_com_hash(
+                conn_check, sped_tipo="ecd",
+                cnpj=cnpj, periodo=ano_cal,
+                arquivo_hash=arquivo_hash,
+            )
+        finally:
+            conn_check.close()
+        if existente:
+            msg = (
+                f"Arquivo ja importado em {existente['importado_em']} "
+                f"(id={existente['id']}). Use --force-reimport para reimportar."
+            )
+            logger.warning(msg)
+            return ResultadoImportacao(
+                arquivo=arquivo_str, cnpj=cnpj, ano_calendario=ano_cal,
+                ano_mes=ano_mes_base, dt_ini=ctx["dt_ini_periodo"],
+                dt_fin=ctx["dt_fin_periodo"], cod_ver=ctx["cod_ver"],
+                encoding_origem=res_enc.encoding,
+                encoding_confianca=res_enc.confianca,
+                total_linhas_lidas=total_linhas,
+                contagens_reais=contagens_reais,
+                contagens_declaradas=contagens_declaradas,
+                divergencias_bloco9=divergencias_bloco9,
+                sucesso=False, mensagem=msg,
+            )
+
     conn = repo.conexao()
     try:
         with conn:
+            # Bug-002 (Opção 2) — DELETE prévio em todas as tabelas ECD
+            # filhas para o (cnpj × ano_calendario), garantindo dedup em
+            # reimport idêntico ou retificadora.
+            deletadas = repo.deletar_dados_anteriores(
+                conn, sped_tipo="ecd",
+                cnpj=cnpj, ano_calendario=ano_cal,
+            )
+            if deletadas > 0:
+                logger.info(
+                    "Reimport detectado para ecd %s/%s: "
+                    "%d rows antigas removidas (Bug-002 fix)",
+                    cnpj, ano_cal, deletadas,
+                )
             repo.registrar_importacao(
                 conn,
                 sped_tipo="ecd",
@@ -303,7 +380,7 @@ def importar(
                 cod_ver=ctx["cod_ver"],
                 encoding_origem=res_enc.encoding,
                 encoding_confianca=res_enc.confianca,
-                status="ok",
+                status=status,
             )
             repo.inserir_ecd_0000(conn, reg0000, ctx)
             if reg_i010:
@@ -356,16 +433,9 @@ def importar(
         encoding_origem=res_enc.encoding,
         encoding_confianca=res_enc.confianca,
         total_linhas_lidas=total_linhas,
-        contagens_reais={
-            "I050": len(regs_i050),
-            "I155": len(regs_i155),
-            "I200": len(regs_i200),
-            "I250": len(regs_i250),
-            "J100": len(regs_j100),
-            "J150": len(regs_j150),
-        },
-        contagens_declaradas={},
-        divergencias_bloco9=[],
-        sucesso=True,
+        contagens_reais=contagens_reais,
+        contagens_declaradas=contagens_declaradas,
+        divergencias_bloco9=divergencias_bloco9,
+        sucesso=sucesso,
         mensagem=erros_parse[0] if erros_parse else "",
     )

@@ -18,9 +18,11 @@ from pathlib import Path
 from src.crossref.common.disponibilidade_sped import atualizar_disponibilidade
 from src.db.repo import Repositorio
 from src.models.registros import ResultadoImportacao
+from src.parsers.blocos.bloco_9 import parsear_9900, parsear_9999
 from src.parsers.blocos.bloco_c_icms import parsear_c100_icms, parsear_c170_icms
 from src.parsers.blocos.bloco_g_icms import parsear_g110, parsear_g125
 from src.parsers.blocos.bloco_h_icms import parsear_h005, parsear_h010
+from src.parsers.common.bloco9 import validar_bloco9
 from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,7 @@ def importar(
     encoding_override: str = "auto",
     prompt_operador: bool = True,
     base_dir_db: Path | None = None,
+    force_reimport: bool = False,
 ) -> ResultadoImportacao:
     """
     Importa um arquivo EFD ICMS/IPI para o banco SQLite longitudinal.
@@ -75,6 +78,10 @@ def importar(
     Persiste: efd_icms_0000, efd_icms_c100, efd_icms_c170,
               efd_icms_g110, efd_icms_g125, efd_icms_h005, efd_icms_h010.
     Atualiza: disponibilidade_efd_icms → 'importada'.
+
+    Bug-002 Opção 3: se `force_reimport=False` e mesmo arquivo já existe
+    em _importacoes para (efd_icms × cnpj × ano_mes), aborta com
+    sucesso=False sem reimportar.
     """
     arquivo_str = str(caminho.resolve())
 
@@ -99,6 +106,10 @@ def importar(
     regs_g125: list = []
     regs_h005: list = []
     regs_h010: list = []
+    regs_9900: list = []
+    reg9999 = None
+
+    contagens_reais: dict[str, int] = {}
 
     for num_linha, linha_raw in enumerate(linhas_raw, start=1):
         linha = linha_raw.strip()
@@ -110,6 +121,7 @@ def importar(
             continue
 
         reg_tipo = campos[1].strip().upper()
+        contagens_reais[reg_tipo] = contagens_reais.get(reg_tipo, 0) + 1
 
         if reg_tipo not in _TIPOS_RELEVANTES:
             continue
@@ -183,6 +195,12 @@ def importar(
                 r = parsear_h010(campos, num_linha, arquivo_str, h005_atual)
                 regs_h010.append(r)
 
+            elif reg_tipo == "9900" and ctx:
+                regs_9900.append(parsear_9900(campos, num_linha, arquivo_str))
+
+            elif reg_tipo == "9999":
+                reg9999 = parsear_9999(campos, num_linha, arquivo_str)
+
         except Exception as exc:
             msg = f"Erro ao parsear linha {num_linha} ({reg_tipo}): {exc}"
             logger.error(msg)
@@ -200,7 +218,7 @@ def importar(
             encoding_origem=res_enc.encoding,
             encoding_confianca=res_enc.confianca,
             total_linhas_lidas=total_linhas,
-            contagens_reais={},
+            contagens_reais=contagens_reais,
             contagens_declaradas={},
             divergencias_bloco9=["Registro 0000 ausente — EFD ICMS/IPI rejeitado"],
             sucesso=False,
@@ -212,12 +230,69 @@ def importar(
     ano_mes = ctx["ano_mes"]
     arquivo_hash = _sha256(caminho)
 
+    # --- Validação Bloco 9 (cruzamento 01) ---
+    # 9999.QTD_LIN do PVA conta apenas linhas SPED válidas (com pipe
+    # inicial). Mantida semântica do PVA por simetria com os demais
+    # parsers — embora EFD ICMS/IPI não tenha registros multilinhas
+    # como o J801 da ECD.
+    total_linhas_sped = sum(1 for l in linhas_raw if l.startswith("|"))
+    contagens_declaradas, divergencias_bloco9 = validar_bloco9(
+        contagens_reais, regs_9900, reg9999, total_linhas_sped,
+    )
+    tem_erro = bool(erros_parse)
+    tem_div_bloco9 = bool(divergencias_bloco9)
+    sucesso = not tem_erro and not tem_div_bloco9
+    status = "ok" if sucesso else "parcial"
+
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
+
+    # Bug-002 (Opção 3) — protege contra reimport acidental.
+    if not force_reimport:
+        conn_check = repo.conexao()
+        try:
+            existente = repo.existe_import_com_hash(
+                conn_check, sped_tipo="efd_icms",
+                cnpj=cnpj, periodo=ano_mes,
+                arquivo_hash=arquivo_hash,
+            )
+        finally:
+            conn_check.close()
+        if existente:
+            msg = (
+                f"Arquivo ja importado em {existente['importado_em']} "
+                f"(id={existente['id']}). Use --force-reimport para reimportar."
+            )
+            logger.warning(msg)
+            return ResultadoImportacao(
+                arquivo=arquivo_str, cnpj=cnpj, ano_calendario=ano_cal,
+                ano_mes=ano_mes, dt_ini=ctx["dt_ini_periodo"],
+                dt_fin=ctx["dt_fin_periodo"], cod_ver=ctx["cod_ver"],
+                encoding_origem=res_enc.encoding,
+                encoding_confianca=res_enc.confianca,
+                total_linhas_lidas=total_linhas,
+                contagens_reais=contagens_reais,
+                contagens_declaradas=contagens_declaradas,
+                divergencias_bloco9=divergencias_bloco9,
+                sucesso=False, mensagem=msg,
+            )
 
     conn = repo.conexao()
     try:
         with conn:
+            # Bug-002 (Opção 2) — DELETE prévio em todas as tabelas
+            # EFD ICMS/IPI filhas para o (cnpj × ano_mes), garantindo
+            # dedup em reimport idêntico ou retificadora.
+            deletadas = repo.deletar_dados_anteriores(
+                conn, sped_tipo="efd_icms",
+                cnpj=cnpj, ano_mes=ano_mes,
+            )
+            if deletadas > 0:
+                logger.info(
+                    "Reimport detectado para efd_icms %s/%s: "
+                    "%d rows antigas removidas (Bug-002 fix)",
+                    cnpj, ano_mes, deletadas,
+                )
             repo.registrar_importacao(
                 conn,
                 sped_tipo="efd_icms",
@@ -229,7 +304,7 @@ def importar(
                 cod_ver=ctx["cod_ver"],
                 encoding_origem=res_enc.encoding,
                 encoding_confianca=res_enc.confianca,
-                status="ok",
+                status=status,
             )
             repo.inserir_icms_0000(conn, reg0000, ctx)
             for r in regs_c100:
@@ -265,13 +340,9 @@ def importar(
         encoding_origem=res_enc.encoding,
         encoding_confianca=res_enc.confianca,
         total_linhas_lidas=total_linhas,
-        contagens_reais={
-            "C170": len(regs_c170),
-            "G125": len(regs_g125),
-            "H010": len(regs_h010),
-        },
-        contagens_declaradas={},
-        divergencias_bloco9=[],
-        sucesso=True,
+        contagens_reais=contagens_reais,
+        contagens_declaradas=contagens_declaradas,
+        divergencias_bloco9=divergencias_bloco9,
+        sucesso=sucesso,
         mensagem=erros_parse[0] if erros_parse else "",
     )

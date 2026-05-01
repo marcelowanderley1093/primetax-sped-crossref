@@ -25,6 +25,7 @@ from src.parsers.blocos.bloco_m import (
     parsear_m100, parsear_m105, parsear_m200, parsear_m210, parsear_m215,
     parsear_m500, parsear_m505, parsear_m600, parsear_m610, parsear_m615,
 )
+from src.parsers.common.bloco9 import validar_bloco9
 from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ def importar(
     encoding_override: str = "auto",
     prompt_operador: bool = True,
     base_dir_db: Path | None = None,
+    force_reimport: bool = False,
 ) -> ResultadoImportacao:
     """
     Importa um arquivo EFD-Contribuições para o banco SQLite.
@@ -91,6 +93,12 @@ def importar(
         encoding_override: "auto", "utf8" ou "latin1".
         prompt_operador: Pede confirmação ao operador em caso de encoding suspeito.
         base_dir_db: Diretório base para data/db (útil em testes).
+        force_reimport: Se False (default), aborta com sucesso=False quando
+            já existe import com mesmo arquivo_hash em _importacoes para
+            o (sped_tipo × cnpj × ano_mes). Bug-002 Opção 3 — protege
+            contra reimport acidental. Para retificadora real (hash
+            diferente), passa naturalmente; Opção 2 (DELETE prévio) trata
+            a substituição.
 
     Returns:
         ResultadoImportacao com contagens, encoding detectado e status.
@@ -416,22 +424,14 @@ def importar(
         )
 
     # --- Validação Bloco 9 (cruzamento 01) ---
-    contagens_declaradas: dict[str, int] = {r.reg_blc: r.qtd_reg_blc for r in regs_9900}
-    divergencias_bloco9: list[str] = []
-
-    for reg_dec, qtd_dec in contagens_declaradas.items():
-        qtd_real = contagens_reais.get(reg_dec, 0)
-        if qtd_real != qtd_dec:
-            divergencias_bloco9.append(
-                f"{reg_dec}: declarado={qtd_dec} real={qtd_real}"
-            )
-
-    if reg9999:
-        # 9999.QTD_LIN inclui a própria linha 9999
-        if reg9999.qtd_lin != total_linhas:
-            divergencias_bloco9.append(
-                f"9999.QTD_LIN={reg9999.qtd_lin} ≠ linhas lidas={total_linhas}"
-            )
+    # 9999.QTD_LIN do PVA conta apenas linhas SPED válidas (com pipe
+    # inicial). Em arquivos com J801 (Termo de Encerramento ECD) o
+    # conteúdo RTF é embutido em Base64 multilinhas — continuações sem
+    # pipe NÃO são contadas pelo PVA. Aqui usamos a mesma semântica.
+    total_linhas_sped = sum(1 for l in linhas_raw if l.startswith("|"))
+    contagens_declaradas, divergencias_bloco9 = validar_bloco9(
+        contagens_reais, regs_9900, reg9999, total_linhas_sped,
+    )
 
     # --- Persistência ---
     cnpj = ctx["cnpj_declarante"]
@@ -441,6 +441,38 @@ def importar(
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
 
+    # Bug-002 (Opção 3) — protege contra reimport acidental do mesmo
+    # arquivo (mesmo hash). Retificadora real (hash diferente) passa
+    # direto e é substituída pela Opção 2 (DELETE prévio abaixo).
+    if not force_reimport:
+        conn_check = repo.conexao()
+        try:
+            existente = repo.existe_import_com_hash(
+                conn_check, sped_tipo="efd_contribuicoes",
+                cnpj=cnpj, periodo=ctx["ano_mes"],
+                arquivo_hash=arquivo_hash,
+            )
+        finally:
+            conn_check.close()
+        if existente:
+            msg = (
+                f"Arquivo ja importado em {existente['importado_em']} "
+                f"(id={existente['id']}). Use --force-reimport para reimportar."
+            )
+            logger.warning(msg)
+            return ResultadoImportacao(
+                arquivo=arquivo_str, cnpj=cnpj, ano_calendario=ano_cal,
+                ano_mes=ctx["ano_mes"], dt_ini=ctx["dt_ini_periodo"],
+                dt_fin=ctx["dt_fin_periodo"], cod_ver=ctx["cod_ver"],
+                encoding_origem=res_enc.encoding,
+                encoding_confianca=res_enc.confianca,
+                total_linhas_lidas=total_linhas,
+                contagens_reais=contagens_reais,
+                contagens_declaradas=contagens_declaradas,
+                divergencias_bloco9=divergencias_bloco9,
+                sucesso=False, mensagem=msg,
+            )
+
     tem_erro = bool(erros_parse)
     tem_div_bloco9 = bool(divergencias_bloco9)
     status = "ok" if not tem_erro and not tem_div_bloco9 else "parcial"
@@ -448,6 +480,19 @@ def importar(
     conn = repo.conexao()
     try:
         with conn:
+            # Bug-002 (Opção 2) — DELETE prévio: garante que reimport
+            # idêntico ou retificadora não duplique dados. _importacoes
+            # preserva histórico (T8 GUI mostra cronologia).
+            deletadas = repo.deletar_dados_anteriores(
+                conn, sped_tipo="efd_contribuicoes",
+                cnpj=cnpj, ano_mes=ctx["ano_mes"],
+            )
+            if deletadas > 0:
+                logger.info(
+                    "Reimport detectado para efd_contribuicoes %s/%s: "
+                    "%d rows antigas removidas (Bug-002 fix)",
+                    cnpj, ctx["ano_mes"], deletadas,
+                )
             repo.registrar_importacao(
                 conn,
                 sped_tipo="efd_contribuicoes",

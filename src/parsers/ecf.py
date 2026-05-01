@@ -31,9 +31,11 @@ from src.parsers.blocos.bloco_m_ecf import (
     parsear_m362,
     parsear_m500,
 )
+from src.parsers.blocos.bloco_9 import parsear_9900, parsear_9999
 from src.parsers.blocos.bloco_9_ecf import parsear_9100
 from src.parsers.blocos.bloco_x_ecf import parsear_x460, parsear_x480
 from src.parsers.blocos.bloco_y_ecf import parsear_y570
+from src.parsers.common.bloco9 import validar_bloco9
 from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,7 @@ def importar(
     encoding_override: str = "auto",
     prompt_operador: bool = True,
     base_dir_db: Path | None = None,
+    force_reimport: bool = False,
 ) -> ResultadoImportacao:
     """
     Importa um arquivo ECF para o banco SQLite longitudinal.
@@ -87,6 +90,10 @@ def importar(
               ecf_x480, ecf_y570.
     Atualiza: disponibilidade_ecf → 'importada'.
     Se TIP_ESC_PRE='L': disponibilidade_ecd → 'estruturalmente_ausente'.
+
+    Bug-002 Opção 3: se `force_reimport=False` e mesmo arquivo já existe
+    em _importacoes para (ecf × cnpj × ano_calendario), aborta com
+    sucesso=False sem reimportar.
     """
     arquivo_str = str(caminho.resolve())
 
@@ -117,6 +124,10 @@ def importar(
     regs_x480: list = []
     regs_y570: list = []
     regs_9100: list = []
+    regs_9900: list = []
+    reg9999 = None
+
+    contagens_reais: dict[str, int] = {}
 
     for num_linha, linha_raw in enumerate(linhas_raw, start=1):
         linha = linha_raw.strip()
@@ -128,6 +139,7 @@ def importar(
             continue
 
         reg_tipo = campos[1].strip().upper()
+        contagens_reais[reg_tipo] = contagens_reais.get(reg_tipo, 0) + 1
 
         if reg_tipo not in _TIPOS_RELEVANTES:
             continue
@@ -234,6 +246,12 @@ def importar(
             elif reg_tipo == "9100" and ctx:
                 regs_9100.append(parsear_9100(campos, num_linha, arquivo_str))
 
+            elif reg_tipo == "9900" and ctx:
+                regs_9900.append(parsear_9900(campos, num_linha, arquivo_str))
+
+            elif reg_tipo == "9999":
+                reg9999 = parsear_9999(campos, num_linha, arquivo_str)
+
         except Exception as exc:
             msg = f"Erro ao parsear linha {num_linha} ({reg_tipo}): {exc}"
             logger.error(msg)
@@ -251,7 +269,7 @@ def importar(
             encoding_origem=res_enc.encoding,
             encoding_confianca=res_enc.confianca,
             total_linhas_lidas=total_linhas,
-            contagens_reais={},
+            contagens_reais=contagens_reais,
             contagens_declaradas={},
             divergencias_bloco9=["Registro 0000 ausente — ECF rejeitada"],
             sucesso=False,
@@ -262,12 +280,68 @@ def importar(
     ano_cal = ctx["ano_calendario"]
     arquivo_hash = _sha256(caminho)
 
+    # --- Validação Bloco 9 (cruzamento 01) ---
+    # 9999.QTD_LIN do PVA conta apenas linhas SPED válidas (com pipe
+    # inicial). Mantida semântica do PVA por simetria com os demais
+    # parsers.
+    total_linhas_sped = sum(1 for l in linhas_raw if l.startswith("|"))
+    contagens_declaradas, divergencias_bloco9 = validar_bloco9(
+        contagens_reais, regs_9900, reg9999, total_linhas_sped,
+    )
+    tem_erro = bool(erros_parse)
+    tem_div_bloco9 = bool(divergencias_bloco9)
+    sucesso = not tem_erro and not tem_div_bloco9
+    status = "ok" if sucesso else "parcial"
+
     repo = Repositorio(cnpj, ano_cal, base_dir=base_dir_db)
     repo.criar_banco()
+
+    # Bug-002 (Opção 3) — protege contra reimport acidental.
+    if not force_reimport:
+        conn_check = repo.conexao()
+        try:
+            existente = repo.existe_import_com_hash(
+                conn_check, sped_tipo="ecf",
+                cnpj=cnpj, periodo=ano_cal,
+                arquivo_hash=arquivo_hash,
+            )
+        finally:
+            conn_check.close()
+        if existente:
+            msg = (
+                f"Arquivo ja importado em {existente['importado_em']} "
+                f"(id={existente['id']}). Use --force-reimport para reimportar."
+            )
+            logger.warning(msg)
+            return ResultadoImportacao(
+                arquivo=arquivo_str, cnpj=cnpj, ano_calendario=ano_cal,
+                ano_mes=ctx["ano_mes"], dt_ini=ctx["dt_ini_periodo"],
+                dt_fin=ctx["dt_fin_periodo"], cod_ver=ctx["cod_ver"],
+                encoding_origem=res_enc.encoding,
+                encoding_confianca=res_enc.confianca,
+                total_linhas_lidas=total_linhas,
+                contagens_reais=contagens_reais,
+                contagens_declaradas=contagens_declaradas,
+                divergencias_bloco9=divergencias_bloco9,
+                sucesso=False, mensagem=msg,
+            )
 
     conn = repo.conexao()
     try:
         with conn:
+            # Bug-002 (Opção 2) — DELETE prévio em todas as tabelas ECF
+            # filhas para o (cnpj × ano_calendario), garantindo dedup em
+            # reimport idêntico ou retificadora.
+            deletadas = repo.deletar_dados_anteriores(
+                conn, sped_tipo="ecf",
+                cnpj=cnpj, ano_calendario=ano_cal,
+            )
+            if deletadas > 0:
+                logger.info(
+                    "Reimport detectado para ecf %s/%s: "
+                    "%d rows antigas removidas (Bug-002 fix)",
+                    cnpj, ano_cal, deletadas,
+                )
             repo.registrar_importacao(
                 conn,
                 sped_tipo="ecf",
@@ -279,7 +353,7 @@ def importar(
                 cod_ver=ctx["cod_ver"],
                 encoding_origem=res_enc.encoding,
                 encoding_confianca=res_enc.confianca,
-                status="ok",
+                status=status,
             )
             repo.inserir_ecf_0000(conn, reg0000, ctx)
             if reg0010:
@@ -343,19 +417,9 @@ def importar(
         encoding_origem=res_enc.encoding,
         encoding_confianca=res_enc.confianca,
         total_linhas_lidas=total_linhas,
-        contagens_reais={
-            "K155": len(regs_k155),
-            "K355": len(regs_k355),
-            "M300": len(regs_m300),
-            "M312": len(regs_m312),
-            "M350": len(regs_m350),
-            "M362": len(regs_m362),
-            "M500": len(regs_m500),
-            "X480": len(regs_x480),
-            "Y570": len(regs_y570),
-        },
-        contagens_declaradas={},
-        divergencias_bloco9=[],
-        sucesso=True,
+        contagens_reais=contagens_reais,
+        contagens_declaradas=contagens_declaradas,
+        divergencias_bloco9=divergencias_bloco9,
+        sucesso=sucesso,
         mensagem=erros_parse[0] if erros_parse else "",
     )

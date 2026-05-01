@@ -125,6 +125,30 @@ Mais flexível para Alternativa B (regras stackable, reutilizáveis entre client
 ### P3 — Coluna `elegivel_essencialidade` em `ecd_i250`
 Mais simples, mas mistura semântica fiscal com schema contábil (não recomendado).
 
+### Implicação do Bug-002 (resolução técnica) sobre P1/P2/P3
+
+Após resolução do Bug-002 via Opção 2 (DELETE prévio em
+reimport — todas as tabelas SPED do tipo × período × CNPJ
+são recriadas em cada import; commits `fd2a63f` + `af3b55f` +
+`c8d6379` da Sprint Hardening 2026-05-01), persistência granular
+T9 deve **referenciar lançamentos por chave de negócio**, não
+por `linha_arquivo` física. Em retificação, `linha_arquivo` muda
+(arquivo novo, ordem nova); chaves de negócio (ex.: `num_lcto +
+cod_cta + dt_lcto + vl_deb_cred` em I250) sobrevivem.
+
+Ajustes às alternativas:
+
+- **P1 ajustado**: chave `(cnpj × ano × cod_cta × num_lcto ×
+  dt_lcto)` em vez de `(... × linha_arquivo)`. Marcação resiste
+  a retificação.
+- **P2 ajustado**: regras stackable aplicam a chaves de negócio
+  (mesmo princípio).
+- **P3 desaconselhado**: coluna em `ecd_i250` perde anotação no
+  DELETE prévio do reimport. P1 ou P2 são preferíveis.
+
+Esta nota decorre da decisão técnica do Bug-002 e preserva
+aprendizado para a próxima sprint da Adaptação T9.
+
 ## 10. Sequência planejada para retomada
 
 | Etapa | Status | Conteúdo |
