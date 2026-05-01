@@ -102,6 +102,42 @@ def _agora() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
+# Mapa: sped_tipo → (chave_periodo, lista de tabelas filhas).
+# Usado por Repositorio.deletar_dados_anteriores (Bug-002 fix) para
+# garantir dedup ao reimportar SPED. Tabelas de controle e anotação
+# (_importacoes, _sped_contexto, reconciliacao_override,
+# contabil_oportunidades_essencialidade, crossref_*) NÃO entram aqui —
+# são preservadas por design.
+_TABELAS_POR_SPED_TIPO: dict[str, tuple[str, list[str]]] = {
+    "efd_contribuicoes": ("ano_mes", [
+        "efd_contrib_0000", "efd_contrib_0110", "efd_contrib_0111",
+        "efd_contrib_0200", "efd_contrib_c100", "efd_contrib_c170",
+        "efd_contrib_c181", "efd_contrib_c185", "efd_contrib_d201",
+        "efd_contrib_d205", "efd_contrib_f100", "efd_contrib_f120",
+        "efd_contrib_f130", "efd_contrib_f150", "efd_contrib_f600",
+        "efd_contrib_f700", "efd_contrib_f800", "efd_contrib_m100",
+        "efd_contrib_m105", "efd_contrib_m200", "efd_contrib_m210",
+        "efd_contrib_m215", "efd_contrib_m500", "efd_contrib_m505",
+        "efd_contrib_m600", "efd_contrib_m610", "efd_contrib_m615",
+        "efd_contrib_1100", "efd_contrib_1500", "efd_contrib_9900",
+    ]),
+    "efd_icms": ("ano_mes", [
+        "efd_icms_0000", "efd_icms_c100", "efd_icms_c170",
+        "efd_icms_g110", "efd_icms_g125", "efd_icms_h005", "efd_icms_h010",
+    ]),
+    "ecd": ("ano_calendario", [
+        "ecd_0000", "ecd_i010", "ecd_c050", "ecd_c155",
+        "ecd_i050", "ecd_i150", "ecd_i155", "ecd_i200", "ecd_i250",
+        "ecd_j005", "ecd_j100", "ecd_j150",
+    ]),
+    "ecf": ("ano_calendario", [
+        "ecf_0000", "ecf_0010", "ecf_k155", "ecf_k355",
+        "ecf_m300", "ecf_m312", "ecf_m350", "ecf_m362", "ecf_m500",
+        "ecf_x460", "ecf_x480", "ecf_9100", "ecf_y570",
+    ]),
+}
+
+
 class Repositorio:
     def __init__(self, cnpj: str, ano_calendario: int, base_dir: Path | None = None):
         self.cnpj = cnpj
@@ -169,6 +205,118 @@ class Repositorio:
             ),
         )
         return cur.lastrowid  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Dedup de reimport (Bug-002) e re-diagnóstico (Bug-005)
+    # ------------------------------------------------------------------
+
+    def existe_import_com_hash(
+        self, conn: sqlite3.Connection, sped_tipo: str, cnpj: str,
+        periodo: int, arquivo_hash: str,
+    ) -> dict | None:
+        """Verifica se já existe import em `_importacoes` com mesmo
+        `arquivo_hash` para o mesmo (sped_tipo × cnpj × período).
+
+        `periodo` semântica:
+        - SPED mensal (efd_contribuicoes, efd_icms): ano_mes (AAAAMM).
+        - SPED anual (ecd, ecf): ano_calendario (AAAA). Internamente
+          mapeado para ano_mes=AAAA01 conforme convenção observada nos
+          bancos NG (registrar_importacao grava jan do ano-calendário
+          para SPED anual).
+
+        Retorna `{"id": int, "importado_em": str}` se existe, ou None.
+
+        Bug-002 — Opção 3 (camada UX): protege contra reimport acidental.
+        Caller decide se aborta (sem flag `--force-reimport`) ou prossegue.
+        Reimport com hash diferente (retificadora real) não é detectado
+        por este método — é tratado pela camada Opção 2 (DELETE prévio
+        em `deletar_dados_anteriores`).
+        """
+        if sped_tipo not in _TABELAS_POR_SPED_TIPO:
+            raise ValueError(f"sped_tipo invalido: {sped_tipo!r}")
+        # SPED anual: _importacoes.ano_mes é gravado como AAAA01
+        if sped_tipo in ("ecd", "ecf"):
+            ano_mes_filtro = periodo * 100 + 1
+        else:
+            ano_mes_filtro = periodo
+        row = conn.execute(
+            "SELECT id, importado_em FROM _importacoes "
+            "WHERE sped_tipo=? AND arquivo_hash=? AND ano_mes=? "
+            "ORDER BY id DESC LIMIT 1",
+            (sped_tipo, arquivo_hash, ano_mes_filtro),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def deletar_dados_anteriores(
+        self, conn: sqlite3.Connection, sped_tipo: str, cnpj: str,
+        *, ano_mes: int | None = None, ano_calendario: int | None = None,
+    ) -> int:
+        """Apaga rows anteriores em todas as tabelas SPED do tipo dado
+        para (cnpj × período). Retorna total de rows deletadas (soma
+        entre tabelas).
+
+        Tabelas de controle e anotação NÃO são tocadas:
+        `_importacoes` (mantém histórico de versões para T8 Auditoria),
+        `_sped_contexto`, `reconciliacao_override`,
+        `contabil_oportunidades_essencialidade`.
+
+        Bug-002 — Opção 2 (núcleo do fix): garante zero duplicação em
+        reimport (idêntico OU retificadora). Caller deve invocar dentro
+        de `with conn:` (transação atômica com os INSERTs subsequentes).
+
+        Para SPED mensal, passar `ano_mes=AAAAMM`. Para SPED anual,
+        passar `ano_calendario=AAAA`. ValueError se ambos None.
+        """
+        if sped_tipo not in _TABELAS_POR_SPED_TIPO:
+            raise ValueError(f"sped_tipo invalido: {sped_tipo!r}")
+        chave_periodo, tabelas = _TABELAS_POR_SPED_TIPO[sped_tipo]
+        valor = ano_mes if chave_periodo == "ano_mes" else ano_calendario
+        if valor is None:
+            raise ValueError(
+                f"sped_tipo={sped_tipo!r} requer {chave_periodo}, recebido None"
+            )
+        total = 0
+        for tab in tabelas:
+            try:
+                cur = conn.execute(
+                    f"DELETE FROM {tab} WHERE cnpj_declarante = ? AND {chave_periodo} = ?",
+                    (cnpj, valor),
+                )
+                total += cur.rowcount
+            except sqlite3.OperationalError:
+                # Tabela ainda não existe (banco antigo sem migração) — OK
+                continue
+        return total
+
+    def deletar_diagnostico_anterior(
+        self, conn: sqlite3.Connection, cnpj: str, ano_calendario: int,
+    ) -> tuple[int, int]:
+        """Apaga rows anteriores em `crossref_oportunidades` +
+        `crossref_divergencias` para (cnpj × ano_calendario). Retorna
+        tupla `(qtd_op_apagadas, qtd_div_apagadas)`.
+
+        Bug-005 — Opção 2: garante zero duplicação em re-diagnóstico.
+
+        LIMITAÇÃO DOCUMENTADA: anotações do auditor (`revisado_em`,
+        `revisado_por`, `nota`) em rows previamente diagnosticadas SÃO
+        PERDIDAS. Decisão consciente baseada em verificação empírica
+        (zero anotações em qualquer banco do projeto na data da
+        resolução — feature implementada mas não usada em produção).
+        Re-debate previsto em sprint UX se aparecer banco com anotação
+        real (gatilho documentado em `docs/debitos-conhecidos.md`
+        entrada Bug-005).
+        """
+        cur_op = conn.execute(
+            "DELETE FROM crossref_oportunidades "
+            "WHERE cnpj_declarante = ? AND ano_calendario = ?",
+            (cnpj, ano_calendario),
+        )
+        cur_div = conn.execute(
+            "DELETE FROM crossref_divergencias "
+            "WHERE cnpj_declarante = ? AND ano_calendario = ?",
+            (cnpj, ano_calendario),
+        )
+        return cur_op.rowcount, cur_div.rowcount
 
     def atualizar_sped_contexto(self, conn: sqlite3.Connection, **campos) -> None:
         campos.setdefault("cnpj", self.cnpj)
