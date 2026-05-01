@@ -556,3 +556,36 @@ def fixture_ecd_cr43_degradado_positivo() -> Path:
 def fixture_ecd_cr43_degradado_negativo() -> Path:
     """ECD degradada com saldo batendo (150K × 150K) — não dispara."""
     return FIXTURES_DIR / "ecd_cr43_degradado_negativo_2025.txt"
+
+
+# Encoding — assinatura PVA (Passo 0 / truncamento em |9999|)
+# ASSINATURA_PVA_SINTETICA: bytes que simulam o blob PKCS#7 anexado pelo
+# PVA da RFB ao final de SPEDs transmitidos. Marcador `SBRCAAEPDR` +
+# ASN.1 SEQUENCE indefinido + OID signedData (1.2.840.113549.1.7.2) +
+# bytes que viram strings começando com '|' quando decodificadas como
+# Latin1 (caso real: bytes UTF-16LE de strings técnicas embutidas no
+# envelope) + caracteres \x0b/\x0c que `splitlines()` trata como quebra.
+ASSINATURA_PVA_SINTETICA: bytes = (
+    b"SBRCAAEPDR"
+    b"\x30\x80"  # SEQUENCE, indefinite length
+    b"\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x07\x02"  # OID signedData
+    b"\xa0\x80\x30\x80\x02\x01\x01"  # context [0], SET de digestAlgorithms
+    b"|\x001\x00|\x005\x00.\x001\x00.\x000\x00|"
+    b"\x0b" + b"|9900|FAKE|999|\x0c"
+    b"\x00\x00\x00\x00"  # zeros que terminam o ASN.1 indefinite
+)
+
+
+@pytest.fixture()
+def caminho_sped_com_assinatura_pva(tmp_path: Path, fixture_minimo: Path) -> Path:
+    """SPED válido (reusa fixture_minimo) + blob simulando assinatura PVA.
+
+    Reproduz o cenário real do bench Norte Geradores: arquivos PVA-signed
+    têm ~7-8 KB de PKCS#7 SignedData anexados após o registro 9999.
+    O detector deve truncar em |9999| antes das Verificações A/B/C,
+    assegurando classificação como 'latin1/validado' (não 'suspeito').
+    """
+    arquivo = tmp_path / "efd_contribuicoes_com_assinatura_pva.txt"
+    sped_bytes = fixture_minimo.read_bytes()
+    arquivo.write_bytes(sped_bytes + ASSINATURA_PVA_SINTETICA)
+    return arquivo

@@ -8,6 +8,9 @@ data/logs/
 # Exceção: tabelas públicas da RFB (reprodutibilidade de diagnósticos)
 !data/tabelas-dinamicas-rfb/
 
+# Dados temporários de trabalho (cliente, exploração, etc) — nunca versionar
+temp/
+
 # Python
 __pycache__/
 *.py[cod]

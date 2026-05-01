@@ -1262,6 +1262,30 @@ CREATE TABLE IF NOT EXISTS ecd_i200 (
 CREATE INDEX IF NOT EXISTS idx_ecd_i200_cnpj_ano  ON ecd_i200(cnpj_declarante, ano_mes);
 CREATE INDEX IF NOT EXISTS idx_ecd_i200_ind_lcto  ON ecd_i200(cnpj_declarante, ind_lcto);
 
+CREATE TABLE IF NOT EXISTS ecd_i250 (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    arquivo_origem        TEXT    NOT NULL,
+    linha_arquivo         INTEGER NOT NULL,
+    bloco                 TEXT    NOT NULL DEFAULT 'I',
+    registro              TEXT    NOT NULL DEFAULT 'I250',
+    cnpj_declarante       TEXT    NOT NULL,
+    dt_ini_periodo        TEXT    NOT NULL,
+    dt_fin_periodo        TEXT    NOT NULL,
+    ano_mes               INTEGER NOT NULL,
+    ano_calendario        INTEGER NOT NULL,
+    cod_ver               TEXT    NOT NULL,
+    i200_linha_arquivo    INTEGER NOT NULL DEFAULT 0,
+    cod_cta               TEXT    NOT NULL,
+    cod_ccus              TEXT,
+    vl_deb_cred           REAL    DEFAULT 0,
+    ind_dc                TEXT,
+    hist_lcto_ccus        TEXT,
+    cod_hist_pad          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ecd_i250_cnpj_ano  ON ecd_i250(cnpj_declarante, ano_mes);
+CREATE INDEX IF NOT EXISTS idx_ecd_i250_cod_cta   ON ecd_i250(cnpj_declarante, cod_cta, ano_mes);
+CREATE INDEX IF NOT EXISTS idx_ecd_i250_i200      ON ecd_i250(cnpj_declarante, i200_linha_arquivo);
+
 CREATE TABLE IF NOT EXISTS ecd_j005 (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     arquivo_origem   TEXT    NOT NULL,
@@ -1306,6 +1330,54 @@ CREATE TABLE IF NOT EXISTS ecd_j150 (
     ind_grp_dre           TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ecd_j150_cnpj_ano ON ecd_j150(cnpj_declarante, ano_calendario);
+
+CREATE TABLE IF NOT EXISTS ecd_j100 (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    arquivo_origem        TEXT    NOT NULL,
+    linha_arquivo         INTEGER NOT NULL,
+    bloco                 TEXT    NOT NULL DEFAULT 'J',
+    registro              TEXT    NOT NULL DEFAULT 'J100',
+    cnpj_declarante       TEXT    NOT NULL,
+    dt_ini_periodo        TEXT    NOT NULL,
+    dt_fin_periodo        TEXT    NOT NULL,
+    ano_mes               INTEGER NOT NULL,
+    ano_calendario        INTEGER NOT NULL,
+    cod_ver               TEXT    NOT NULL,
+    j005_linha_arquivo    INTEGER NOT NULL DEFAULT 0,
+    nu_ordem              TEXT,
+    cod_agl               TEXT,
+    ind_cod_agl           TEXT,
+    nivel_agl             TEXT,
+    cod_agl_sup           TEXT,
+    ind_grp_bal           TEXT,
+    descr_cod_agl         TEXT,
+    vl_cta_ini            REAL    DEFAULT 0,
+    ind_dc_ini            TEXT,
+    vl_cta_fin            REAL    DEFAULT 0,
+    ind_dc_fin            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ecd_j100_cnpj_ano ON ecd_j100(cnpj_declarante, ano_calendario);
+
+-- ============================================================
+-- Sprint Contábil — Oportunidades de essencialidade Tema 779
+-- ============================================================
+-- Auditor marca despesas (cod_nat='04' do I050) que considera
+-- candidatas a creditamento de PIS/COFINS sob essencialidade
+-- (REsp 1.221.170/PR, Tema 779). Persistido por CNPJ × AC × cod_cta.
+-- Análise subjetiva, mas com rastreabilidade (quem, quando, nota).
+
+CREATE TABLE IF NOT EXISTS contabil_oportunidades_essencialidade (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    cnpj_declarante TEXT    NOT NULL,
+    ano_calendario  INTEGER NOT NULL,
+    cod_cta         TEXT    NOT NULL,
+    marcado_em      TEXT    NOT NULL,  -- ISO-8601
+    marcado_por     TEXT,                -- nome do auditor (QSettings)
+    nota            TEXT,
+    UNIQUE(cnpj_declarante, ano_calendario, cod_cta)
+);
+CREATE INDEX IF NOT EXISTS idx_contabil_oport_cnpj_ano
+    ON contabil_oportunidades_essencialidade(cnpj_declarante, ano_calendario);
 
 -- ============================================================
 -- Sprint 8 — ECF (Leiaute 12, AC 2025)
@@ -1582,6 +1654,9 @@ CREATE INDEX IF NOT EXISTS idx_ecf_y570_cnpj_ano ON ecf_y570(cnpj_declarante, an
 -- Output do motor de cruzamentos
 -- ============================================================
 
+-- Colunas revisado_em/revisado_por/nota: revisão por-linha do auditor
+-- (decisão #12 do planejamento GUI). Persistidas via Repositorio.marcar_revisada
+-- e Repositorio.atualizar_nota; lidas pelo T4 (DetailPanel).
 CREATE TABLE IF NOT EXISTS crossref_oportunidades (
     id                          INTEGER PRIMARY KEY AUTOINCREMENT,
     codigo_regra                TEXT    NOT NULL,
@@ -1593,7 +1668,10 @@ CREATE TABLE IF NOT EXISTS crossref_oportunidades (
     cnpj_declarante             TEXT    NOT NULL,
     ano_mes                     INTEGER,
     ano_calendario              INTEGER NOT NULL,
-    gerado_em                   TEXT    NOT NULL
+    gerado_em                   TEXT    NOT NULL,
+    revisado_em                 TEXT,              -- ISO-8601 ou NULL
+    revisado_por                TEXT,              -- usuário responsável
+    nota                        TEXT               -- texto livre do auditor
 );
 CREATE INDEX IF NOT EXISTS idx_op_cnpj_ano ON crossref_oportunidades(cnpj_declarante, ano_calendario);
 CREATE INDEX IF NOT EXISTS idx_op_regra    ON crossref_oportunidades(codigo_regra);
@@ -1607,6 +1685,9 @@ CREATE TABLE IF NOT EXISTS crossref_divergencias (
     cnpj_declarante  TEXT    NOT NULL,
     ano_mes          INTEGER,
     ano_calendario   INTEGER NOT NULL,
-    gerado_em        TEXT    NOT NULL
+    gerado_em        TEXT    NOT NULL,
+    revisado_em      TEXT,
+    revisado_por     TEXT,
+    nota             TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_div_cnpj_ano ON crossref_divergencias(cnpj_declarante, ano_calendario);

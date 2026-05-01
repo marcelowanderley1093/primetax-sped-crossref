@@ -1,7 +1,7 @@
 """
 Parsers dos registros do Bloco I da ECD (Leiaute 9 — ADE Cofis 01/2026).
 
-Registros cobertos: I010, I050, I150, I155, I200.
+Registros cobertos: I010, I050, I150, I155, I200, I250.
 """
 
 from decimal import Decimal, InvalidOperation
@@ -12,6 +12,7 @@ from src.models.registros import (
     RegEcdI150,
     RegEcdI155,
     RegEcdI200,
+    RegEcdI250,
 )
 
 
@@ -109,4 +110,26 @@ def parsear_i200(
         vl_lcto=_dec(_g(campos, 4)),
         ind_lcto=_g(campos, 5),
         dt_lcto_ext=_data(_g(campos, 6)),
+    )
+
+
+def parsear_i250(
+    campos: list[str], num_linha: int, arquivo_str: str, i200_linha: int,
+) -> RegEcdI250:
+    """I250 — Partidas. Layout real Leiaute 9 ECD:
+       REG | COD_CTA | COD_CCUS | VL_DEB_CRED | IND_DC | NUM_ARQ |
+       COD_HIST_PAD | HIST_LCTO_CCUS
+    NUM_ARQ na posição [6] é descartado (não compõe a partida);
+    HIST_LCTO_CCUS está em [8] (texto livre)."""
+    return RegEcdI250(
+        linha_arquivo=num_linha,
+        arquivo_origem=arquivo_str,
+        reg="I250",
+        i200_linha_arquivo=i200_linha,
+        cod_cta=_g(campos, 2),
+        cod_ccus=_g(campos, 3),
+        vl_deb_cred=_dec(_g(campos, 4)),
+        ind_dc=_g(campos, 5),
+        hist_lcto_ccus=_g(campos, 8),
+        cod_hist_pad=_g(campos, 7),
     )

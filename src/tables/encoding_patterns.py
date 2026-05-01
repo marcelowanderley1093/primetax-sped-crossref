@@ -7,21 +7,42 @@ Se uma dessas sequências aparece em campos de texto de um arquivo decodificado 
 """
 
 # Sequências de mojibake Latin1-como-UTF-8 para caracteres acentuados portugueses.
-# Cada entrada é (byte_sequence_em_latin1, caracter_original_utf8).
+# Cada entrada é uma sequência que, se aparecer no texto decodificado como Latin1,
+# indica que o arquivo original era UTF-8 (cada acentuado em UTF-8 começa com \xc3
+# ou \xc2 que, em Latin1, viram Ã ou Â).
+#
+# Lista alinhada com paridade v6 arquivada: pares específicos apenas, sem prefixos
+# soltos (Ã sozinho gerava falso positivo em qualquer Ã legítimo Latin1, ex: ÇÃO em
+# MANUTENÇÃO/LOCAÇÃO).
 MOJIBAKE_LATIN1_COMO_UTF8: list[str] = [
-    "Ã§",   # ç  (U+00E7)
-    "Ã£",   # ã  (U+00E3)
-    "Ãª",   # ê  (U+00EA)
-    "Ã¡",   # á  (U+00E1)
-    "Ã³",   # ó  (U+00F3)
-    "Ã©",   # é  (U+00E9)
-    "Ã­",   # í  (U+00ED)
-    "Ãº",   # ú  (U+00FA)
-    "Ã‡",   # Ç  (U+00C7)
-    "Ã£o",  # ão (sequência comum em português)
-    "Ã",    # À  (U+00C0) — prefixo mais genérico, usar com threshold maior
-    "â€œ",  # "  (U+201C) — aspas curvas
-    "â€™",  # '  (U+2019) — apóstrofe curvo
+    # Vogais acentuadas minúsculas
+    "Ã§",   # ç
+    "Ã£",   # ã
+    "Ã¡",   # á
+    "Ã¢",   # â
+    "Ã ",   # à (atenção: termina com espaço)
+    "Ã©",   # é
+    "Ãª",   # ê
+    "Ã­",   # í
+    "Ã®",   # î
+    "Ã³",   # ó
+    "Ãµ",   # õ
+    "Ã´",   # ô
+    "Ãº",   # ú
+    "Ã»",   # û
+    "Ã¨",   # è
+    "Ã±",   # ñ
+    # Maiúsculas
+    "Ã‡",   # Ç
+    "ÃƒÃ ",  # Ã (mojibake duplo, raro)
+    # Prefixo \xc2 (NBSP, símbolos não-quebráveis)
+    "Â ",   # NBSP
+    "Â°",   # graus (Nº como N°)
+    "Â§",   # parágrafo
+    # Aspas/apóstrofes curvos CP-1252 (mantidos da lista anterior; úteis para
+    # arquivos copiados/colados de Word com encoding intermediário corrompido)
+    "â€œ",  # "  (aspas curvas)
+    "â€™",  # '  (apóstrofe curvo)
 ]
 
 # Threshold: quantas ocorrências no arquivo inteiro já indicam encoding errado.

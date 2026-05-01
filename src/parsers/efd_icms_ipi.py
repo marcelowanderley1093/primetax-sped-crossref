@@ -21,7 +21,7 @@ from src.models.registros import ResultadoImportacao
 from src.parsers.blocos.bloco_c_icms import parsear_c100_icms, parsear_c170_icms
 from src.parsers.blocos.bloco_g_icms import parsear_g110, parsear_g125
 from src.parsers.blocos.bloco_h_icms import parsear_h005, parsear_h010
-from src.parsers.common.encoding import detectar_encoding
+from src.parsers.common.encoding import detectar_encoding, truncar_em_9999
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,7 @@ def importar(
     )
     codec = "utf-8" if res_enc.encoding == "utf8" else "latin-1"
     texto = caminho.read_text(encoding=codec, errors="strict")
+    texto = truncar_em_9999(texto)
     linhas_raw = texto.splitlines()
     total_linhas = len(linhas_raw)
 

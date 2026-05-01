@@ -1027,6 +1027,27 @@ class RegEcdI200:
 
 
 @dataclass
+class RegEcdI250:
+    """I250 — Partidas do Lançamento (filho de I200).
+    Base legal: ADE Cofis 01/2026; Lei 6.404/1976 art. 177.
+    Cada I250 representa uma partida individual (débito ou crédito) de um
+    lançamento contábil. Soma das partidas D = soma das C dentro de um I200
+    (princípio das partidas dobradas).
+    Sprint Contábil: razão da conta lê I250 filtrando por COD_CTA + período.
+    """
+    linha_arquivo: int
+    arquivo_origem: str
+    reg: str                 # "I250"
+    i200_linha_arquivo: int  # FK rastreabilidade ao I200 pai
+    cod_cta: str             # [2] — código da conta movimentada
+    cod_ccus: str            # [3] — centro de custo (opcional)
+    vl_deb_cred: Decimal     # [4] — valor da partida
+    ind_dc: str              # [5] — D (débito) ou C (crédito)
+    hist_lcto_ccus: str      # [6] — histórico do lançamento (texto livre)
+    cod_hist_pad: str        # [7] — código de histórico padrão (opcional)
+
+
+@dataclass
 class RegEcdJ005:
     """J005 — Identificação da Demonstração Contábil (pai de J100/J150).
     Base legal: ADE Cofis 01/2026.
@@ -1062,6 +1083,31 @@ class RegEcdJ150:
     vl_cta_fin: Decimal # [10] — valor fim do período
     ind_dc_fin: str     # [11] — D/C
     ind_grp_dre: str    # [12] — grupo DRE
+
+
+@dataclass
+class RegEcdJ100:
+    """J100 — Balanço Patrimonial (filho de J005, ID_DEM='01').
+    Base legal: ADE Cofis 01/2026; Lei 6.404/1976 arts. 178-182.
+    Estrutura hierárquica por COD_AGL (código de aglutinação) e NIVEL_AGL.
+    IND_GRP_BAL: 'A' Ativo, 'P' Passivo + Patrimônio Líquido.
+    Sprint Contábil: BP estruturado oficial (não heurístico).
+    """
+    linha_arquivo: int
+    arquivo_origem: str
+    reg: str                 # "J100"
+    j005_linha_arquivo: int  # FK rastreabilidade ao J005 pai
+    nu_ordem: str            # [2]
+    cod_agl: str             # [3] — código de aglutinação
+    ind_cod_agl: str         # [4] — 'S' (superior) ou ''
+    nivel_agl: str           # [5] — nível na hierarquia
+    cod_agl_sup: str         # [6] — superior
+    ind_grp_bal: str         # [7] — 'A' Ativo, 'P' Passivo+PL
+    descr_cod_agl: str       # [8]
+    vl_cta_ini: Decimal      # [9] — saldo inicial
+    ind_dc_ini: str          # [10] — D/C
+    vl_cta_fin: Decimal      # [11] — saldo final
+    ind_dc_fin: str          # [12] — D/C
 
 
 # ============================================================
